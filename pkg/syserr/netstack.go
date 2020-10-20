@@ -46,6 +46,7 @@ var (
 	ErrInvalidOptionValue    = New(tcpip.ErrInvalidOptionValue.String(), linux.EINVAL)
 	ErrBroadcastDisabled     = New(tcpip.ErrBroadcastDisabled.String(), linux.EACCES)
 	ErrNotPermittedNet       = New(tcpip.ErrNotPermitted.String(), linux.EPERM)
+	ErrBadBuffer             = New(tcpip.ErrBadBuffer.String(), linux.EFAULT)
 )
 
 var netstackErrorTranslations = map[*tcpip.Error]*Error{
@@ -87,6 +88,7 @@ var netstackErrorTranslations = map[*tcpip.Error]*Error{
 	tcpip.ErrBroadcastDisabled:         ErrBroadcastDisabled,
 	tcpip.ErrNotPermitted:              ErrNotPermittedNet,
 	tcpip.ErrAddressFamilyNotSupported: ErrAddressFamilyNotSupported,
+	tcpip.ErrBadBuffer:                 ErrBadBuffer,
 }
 
 // TranslateNetstackError converts an error from the tcpip package to a sentry

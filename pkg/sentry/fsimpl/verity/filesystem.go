@@ -426,6 +426,16 @@ func (fs *filesystem) verifyStatAndChildrenLocked(ctx context.Context, d *dentry
 		params.DataAndTreeInSameFile = true
 	}
 
+	if d.isSymlink() {
+		target, err := d.readlink(ctx)
+		if err != nil {
+			return err
+		}
+		params.Symlink = target
+	} else {
+		params.Symlink = ""
+	}
+
 	if _, err := merkletree.Verify(params); err != nil && err != io.EOF {
 		return alertIntegrityViolation(fmt.Sprintf("Verification stat for %s failed: %v", childPath, err))
 	}
@@ -433,6 +443,7 @@ func (fs *filesystem) verifyStatAndChildrenLocked(ctx context.Context, d *dentry
 	d.uid = stat.UID
 	d.gid = stat.GID
 	d.size = uint32(size)
+	d.symlink = params.Symlink
 	return nil
 }
 
@@ -934,11 +945,7 @@ func (fs *filesystem) ReadlinkAt(ctx context.Context, rp *vfs.ResolvingPath) (st
 	if err != nil {
 		return "", err
 	}
-	//TODO(b/162787271): Provide integrity check for ReadlinkAt.
-	return fs.vfsfs.VirtualFilesystem().ReadlinkAt(ctx, d.fs.creds, &vfs.PathOperation{
-		Root:  d.lowerVD,
-		Start: d.lowerVD,
-	})
+	return d.symlink, nil
 }
 
 // RenameAt implements vfs.FilesystemImpl.RenameAt.

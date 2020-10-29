@@ -239,6 +239,38 @@ func newFileFD(ctx context.Context, t *testing.T, vfsObj *vfs.VirtualFilesystem,
 	return fd, dataSize, err
 }
 
+// createSymlink creates a symbolic link at symlink referring to the given target.
+func createSymlink(ctx context.Context, vfsObj *vfs.VirtualFilesystem, root vfs.VirtualDentry, target string, symlink string) error {
+	creds := auth.CredentialsFromContext(ctx)
+	lowerRoot := root.Dentry().Impl().(*dentry).lowerVD
+
+	err := vfsObj.SymlinkAt(ctx, creds, &vfs.PathOperation{
+		Root:  lowerRoot,
+		Start: lowerRoot,
+		Path:  fspath.Parse(symlink),
+	}, target)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// unlink deletes the symbolic link at symlink.
+func unlink(ctx context.Context, vfsObj *vfs.VirtualFilesystem, root vfs.VirtualDentry, symlink string) error {
+	creds := auth.CredentialsFromContext(ctx)
+	lowerRoot := root.Dentry().Impl().(*dentry).lowerVD
+
+	err := vfsObj.UnlinkAt(ctx, creds, &vfs.PathOperation{
+		Root:  lowerRoot,
+		Start: lowerRoot,
+		Path:  fspath.Parse(symlink),
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // flipRandomBit randomly flips a bit in the file represented by fd.
 func flipRandomBit(ctx context.Context, fd *vfs.FileDescription, size int) error {
 	randomPos := int64(rand.Intn(size))
@@ -757,5 +789,109 @@ func TestOpenRenamedFileFails(t *testing.T) {
 				t.Errorf("got OpenAt error: %v, expected EIO", err)
 			}
 		})
+	}
+}
+
+// TestUnmodifiedSymlinkReadSucceeds ensures that readlink() for an unmodified verity enabled
+// symlink succeeds.
+func TestUnmodifiedSymlinkReadlinkSucceeds(t *testing.T) {
+	vfsObj, root, ctx, err := newVerityRoot(t, SHA256)
+	if err != nil {
+		t.Fatalf("newVerityRoot: %v", err)
+	}
+
+	target := "verity-test-file"
+	_, _, err = newFileFD(ctx, vfsObj, root, target, 0644)
+	if err != nil {
+		t.Fatalf("newFileFD: %v", err)
+	}
+
+	symlink := "verity-test-symlink"
+	err = createSymlink(ctx, vfsObj, root, target, symlink)
+	if err != nil {
+		t.Fatalf("createSymlink: %v", err)
+	}
+
+	fd, err := vfsObj.OpenAt(ctx, auth.CredentialsFromContext(ctx), &vfs.PathOperation{
+		Root:  root,
+		Start: root,
+		Path:  fspath.Parse(symlink),
+	}, &vfs.OpenOptions{
+		Flags: linux.O_RDONLY,
+	})
+
+	if err != nil {
+		t.Fatalf("OpenAt symlink: %v", err)
+	}
+
+	// Enable verity on the symlink file.
+	var args arch.SyscallArguments
+	args[1] = arch.SyscallArgument{Value: linux.FS_IOC_ENABLE_VERITY}
+	if _, err := fd.Ioctl(ctx, nil /* uio */, args); err != nil {
+		t.Fatalf("fd.Ioctl: %v", err)
+	}
+
+	// Confirms ReadlinkAt succeeds.
+	if _, err := vfsObj.ReadlinkAt(ctx, auth.CredentialsFromContext(ctx), &vfs.PathOperation{
+		Root:  root,
+		Start: root,
+		Path:  fspath.Parse(symlink),
+	}); err != nil {
+		t.Errorf("ReadlinkAt: %v", err)
+	}
+}
+
+// TestModifiedSymlinkReadFails ensures that reading value of a modified verity enabled
+// symlink fails.
+func TestModifiedSymlinkReadFails(t *testing.T) {
+	vfsObj, root, ctx, err := newVerityRoot(t, SHA256)
+	if err != nil {
+		t.Fatalf("newVerityRoot: %v", err)
+	}
+
+	target := "verity-test-file"
+	_, _, err = newFileFD(ctx, vfsObj, root, target, 0644)
+	if err != nil {
+		t.Fatalf("newFileFD: %v", err)
+	}
+
+	symlink := "verity-test-symlink"
+	err = createSymlink(ctx, vfsObj, root, target, symlink)
+	if err != nil {
+		t.Fatalf("createSymlink: %v", err)
+	}
+
+	fd, err := vfsObj.OpenAt(ctx, auth.CredentialsFromContext(ctx), &vfs.PathOperation{
+		Root:  root,
+		Start: root,
+		Path:  fspath.Parse(symlink),
+	}, &vfs.OpenOptions{
+		Flags: linux.O_RDONLY,
+	})
+
+	if err != nil {
+		t.Fatalf("OpenAt symlink: %v", err)
+	}
+
+	// Enable verity on the symlink file.
+	var args arch.SyscallArguments
+	args[1] = arch.SyscallArgument{Value: linux.FS_IOC_ENABLE_VERITY}
+	if _, err := fd.Ioctl(ctx, nil /* uio */, args); err != nil {
+		t.Fatalf("fd.Ioctl: %v", err)
+	}
+
+	// Modify symlink.
+	err = unlink(ctx, vfsObj, root, symlink)
+	if err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+
+	// Verify ReadlinkAt() fails.
+	if _, err := vfsObj.ReadlinkAt(ctx, auth.CredentialsFromContext(ctx), &vfs.PathOperation{
+		Root:  root,
+		Start: root,
+		Path:  fspath.Parse(symlink),
+	}); err == nil {
+		t.Fatalf("ReadlinkAt succeeded with modified symlink: %v", err)
 	}
 }

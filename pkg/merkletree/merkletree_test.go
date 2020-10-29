@@ -159,10 +159,12 @@ func TestLayout(t *testing.T) {
 }
 
 const (
-	defaultName = "merkle_test"
-	defaultMode = 0644
-	defaultUID  = 0
-	defaultGID  = 0
+	defaultName     = "merkle_test"
+	defaultMode     = 0644
+	defaultUID      = 0
+	defaultGID      = 0
+	defaultSymlink  = "merkle_test_link"
+	modifiedSymlink = "merkle_modified_test_link"
 )
 
 // bytesReadWriter is used to read from/write to/seek in a byte array. Unlike
@@ -203,112 +205,112 @@ func TestGenerate(t *testing.T) {
 			data:                  bytes.Repeat([]byte{0}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{42, 197, 191, 52, 206, 122, 93, 34, 198, 125, 100, 154, 171, 177, 94, 14, 49, 40, 76, 157, 122, 58, 78, 6, 163, 248, 30, 238, 16, 190, 173, 175},
+			expectedHash:          []byte{242, 138, 110, 99, 182, 1, 101, 132, 176, 65, 93, 214, 145, 42, 246, 111, 252, 88, 59, 203, 71, 222, 115, 93, 227, 78, 234, 218, 17, 35, 253, 220},
 		},
 		{
 			name:                  "OnePageZeroesSHA256SameFile",
 			data:                  bytes.Repeat([]byte{0}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{42, 197, 191, 52, 206, 122, 93, 34, 198, 125, 100, 154, 171, 177, 94, 14, 49, 40, 76, 157, 122, 58, 78, 6, 163, 248, 30, 238, 16, 190, 173, 175},
+			expectedHash:          []byte{242, 138, 110, 99, 182, 1, 101, 132, 176, 65, 93, 214, 145, 42, 246, 111, 252, 88, 59, 203, 71, 222, 115, 93, 227, 78, 234, 218, 17, 35, 253, 220},
 		},
 		{
 			name:                  "OnePageZeroesSHA512SeparateFile",
 			data:                  bytes.Repeat([]byte{0}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{87, 131, 150, 74, 0, 218, 117, 114, 34, 23, 212, 16, 122, 97, 124, 172, 41, 46, 107, 150, 33, 46, 56, 39, 5, 246, 215, 187, 140, 83, 35, 63, 111, 74, 155, 241, 161, 214, 92, 141, 232, 125, 99, 71, 168, 102, 82, 20, 229, 249, 248, 28, 29, 238, 199, 223, 173, 180, 179, 46, 241, 240, 237, 74},
+			expectedHash:          []byte{27, 84, 109, 4, 190, 225, 177, 159, 83, 73, 33, 224, 227, 82, 142, 149, 30, 62, 102, 189, 11, 79, 176, 42, 161, 4, 14, 233, 132, 4, 132, 14, 188, 161, 46, 127, 237, 195, 93, 23, 174, 1, 149, 208, 98, 254, 107, 160, 97, 182, 201, 59, 121, 21, 101, 202, 40, 110, 68, 186, 253, 22, 128, 123},
 		},
 		{
 			name:                  "OnePageZeroesSHA512SameFile",
 			data:                  bytes.Repeat([]byte{0}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{87, 131, 150, 74, 0, 218, 117, 114, 34, 23, 212, 16, 122, 97, 124, 172, 41, 46, 107, 150, 33, 46, 56, 39, 5, 246, 215, 187, 140, 83, 35, 63, 111, 74, 155, 241, 161, 214, 92, 141, 232, 125, 99, 71, 168, 102, 82, 20, 229, 249, 248, 28, 29, 238, 199, 223, 173, 180, 179, 46, 241, 240, 237, 74},
+			expectedHash:          []byte{27, 84, 109, 4, 190, 225, 177, 159, 83, 73, 33, 224, 227, 82, 142, 149, 30, 62, 102, 189, 11, 79, 176, 42, 161, 4, 14, 233, 132, 4, 132, 14, 188, 161, 46, 127, 237, 195, 93, 23, 174, 1, 149, 208, 98, 254, 107, 160, 97, 182, 201, 59, 121, 21, 101, 202, 40, 110, 68, 186, 253, 22, 128, 123},
 		},
 		{
 			name:                  "MultiplePageZeroesSHA256SeparateFile",
 			data:                  bytes.Repeat([]byte{0}, 128*usermem.PageSize+1),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{115, 151, 35, 147, 223, 91, 17, 6, 162, 145, 237, 81, 88, 53, 120, 49, 128, 70, 188, 28, 254, 241, 19, 233, 30, 243, 71, 225, 57, 58, 61, 38},
+			expectedHash:          []byte{128, 153, 155, 246, 187, 223, 75, 98, 101, 198, 83, 120, 240, 99, 64, 203, 41, 141, 87, 161, 216, 231, 73, 116, 183, 24, 102, 13, 250, 178, 160, 86},
 		},
 		{
 			name:                  "MultiplePageZeroesSHA256SameFile",
 			data:                  bytes.Repeat([]byte{0}, 128*usermem.PageSize+1),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{115, 151, 35, 147, 223, 91, 17, 6, 162, 145, 237, 81, 88, 53, 120, 49, 128, 70, 188, 28, 254, 241, 19, 233, 30, 243, 71, 225, 57, 58, 61, 38},
+			expectedHash:          []byte{128, 153, 155, 246, 187, 223, 75, 98, 101, 198, 83, 120, 240, 99, 64, 203, 41, 141, 87, 161, 216, 231, 73, 116, 183, 24, 102, 13, 250, 178, 160, 86},
 		},
 		{
 			name:                  "MultiplePageZeroesSHA512SeparateFile",
 			data:                  bytes.Repeat([]byte{0}, 128*usermem.PageSize+1),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{41, 94, 205, 97, 254, 226, 171, 69, 76, 102, 197, 47, 113, 53, 24, 244, 103, 131, 83, 73, 87, 212, 247, 140, 32, 144, 211, 158, 25, 131, 194, 57, 21, 224, 128, 119, 69, 100, 45, 50, 157, 54, 46, 214, 152, 179, 59, 78, 28, 48, 146, 160, 204, 48, 27, 90, 152, 193, 167, 45, 150, 67, 66, 217},
+			expectedHash:          []byte{181, 115, 40, 11, 78, 174, 220, 231, 165, 255, 23, 93, 7, 205, 53, 243, 247, 38, 230, 30, 181, 228, 186, 164, 186, 9, 202, 26, 145, 254, 188, 89, 5, 98, 68, 226, 245, 139, 94, 161, 103, 131, 74, 105, 53, 166, 62, 252, 31, 69, 58, 37, 118, 206, 125, 71, 98, 116, 202, 80, 11, 235, 128, 117},
 		},
 		{
 			name:                  "MultiplePageZeroesSHA512SameFile",
 			data:                  bytes.Repeat([]byte{0}, 128*usermem.PageSize+1),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{41, 94, 205, 97, 254, 226, 171, 69, 76, 102, 197, 47, 113, 53, 24, 244, 103, 131, 83, 73, 87, 212, 247, 140, 32, 144, 211, 158, 25, 131, 194, 57, 21, 224, 128, 119, 69, 100, 45, 50, 157, 54, 46, 214, 152, 179, 59, 78, 28, 48, 146, 160, 204, 48, 27, 90, 152, 193, 167, 45, 150, 67, 66, 217},
+			expectedHash:          []byte{181, 115, 40, 11, 78, 174, 220, 231, 165, 255, 23, 93, 7, 205, 53, 243, 247, 38, 230, 30, 181, 228, 186, 164, 186, 9, 202, 26, 145, 254, 188, 89, 5, 98, 68, 226, 245, 139, 94, 161, 103, 131, 74, 105, 53, 166, 62, 252, 31, 69, 58, 37, 118, 206, 125, 71, 98, 116, 202, 80, 11, 235, 128, 117},
 		},
 		{
 			name:                  "SingleASHA256SeparateFile",
 			data:                  []byte{'a'},
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{52, 159, 140, 206, 140, 138, 231, 140, 94, 14, 252, 66, 175, 128, 191, 14, 52, 215, 190, 184, 165, 50, 182, 224, 42, 156, 145, 0, 1, 15, 187, 85},
+			expectedHash:          []byte{156, 238, 233, 116, 137, 244, 102, 56, 58, 24, 236, 239, 40, 229, 179, 157, 47, 201, 171, 62, 244, 90, 54, 238, 151, 29, 197, 11, 175, 30, 144, 5},
 		},
 		{
 			name:                  "SingleASHA256SameFile",
 			data:                  []byte{'a'},
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{52, 159, 140, 206, 140, 138, 231, 140, 94, 14, 252, 66, 175, 128, 191, 14, 52, 215, 190, 184, 165, 50, 182, 224, 42, 156, 145, 0, 1, 15, 187, 85},
+			expectedHash:          []byte{156, 238, 233, 116, 137, 244, 102, 56, 58, 24, 236, 239, 40, 229, 179, 157, 47, 201, 171, 62, 244, 90, 54, 238, 151, 29, 197, 11, 175, 30, 144, 5},
 		},
 		{
 			name:                  "SingleASHA512SeparateFile",
 			data:                  []byte{'a'},
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{232, 90, 223, 95, 60, 151, 149, 172, 174, 58, 206, 97, 189, 103, 6, 202, 67, 248, 1, 189, 243, 51, 250, 42, 5, 89, 195, 9, 50, 74, 39, 169, 114, 228, 109, 225, 128, 210, 63, 94, 18, 133, 58, 48, 225, 100, 176, 55, 87, 60, 235, 224, 143, 41, 15, 253, 94, 28, 251, 233, 99, 207, 152, 108},
+			expectedHash:          []byte{41, 54, 69, 179, 231, 40, 160, 63, 77, 250, 62, 213, 65, 164, 174, 47, 103, 64, 74, 240, 120, 177, 156, 149, 80, 182, 57, 222, 98, 117, 24, 7, 210, 60, 63, 175, 104, 61, 133, 12, 39, 183, 67, 16, 135, 57, 238, 231, 9, 42, 118, 129, 61, 89, 194, 224, 73, 201, 221, 96, 255, 224, 21, 244},
 		},
 		{
 			name:                  "SingleASHA512SameFile",
 			data:                  []byte{'a'},
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{232, 90, 223, 95, 60, 151, 149, 172, 174, 58, 206, 97, 189, 103, 6, 202, 67, 248, 1, 189, 243, 51, 250, 42, 5, 89, 195, 9, 50, 74, 39, 169, 114, 228, 109, 225, 128, 210, 63, 94, 18, 133, 58, 48, 225, 100, 176, 55, 87, 60, 235, 224, 143, 41, 15, 253, 94, 28, 251, 233, 99, 207, 152, 108},
+			expectedHash:          []byte{41, 54, 69, 179, 231, 40, 160, 63, 77, 250, 62, 213, 65, 164, 174, 47, 103, 64, 74, 240, 120, 177, 156, 149, 80, 182, 57, 222, 98, 117, 24, 7, 210, 60, 63, 175, 104, 61, 133, 12, 39, 183, 67, 16, 135, 57, 238, 231, 9, 42, 118, 129, 61, 89, 194, 224, 73, 201, 221, 96, 255, 224, 21, 244},
 		},
 		{
 			name:                  "OnePageASHA256SeparateFile",
 			data:                  bytes.Repeat([]byte{'a'}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{157, 60, 139, 54, 248, 39, 187, 77, 31, 107, 241, 26, 240, 49, 83, 159, 182, 60, 128, 85, 121, 204, 15, 249, 44, 248, 127, 134, 58, 220, 41, 185},
+			expectedHash:          []byte{242, 138, 110, 99, 182, 1, 101, 132, 176, 65, 93, 214, 145, 42, 246, 111, 252, 88, 59, 203, 71, 222, 115, 93, 227, 78, 234, 218, 17, 35, 253, 220},
 		},
 		{
 			name:                  "OnePageASHA256SameFile",
 			data:                  bytes.Repeat([]byte{'a'}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA256,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{157, 60, 139, 54, 248, 39, 187, 77, 31, 107, 241, 26, 240, 49, 83, 159, 182, 60, 128, 85, 121, 204, 15, 249, 44, 248, 127, 134, 58, 220, 41, 185},
+			expectedHash:          []byte{242, 138, 110, 99, 182, 1, 101, 132, 176, 65, 93, 214, 145, 42, 246, 111, 252, 88, 59, 203, 71, 222, 115, 93, 227, 78, 234, 218, 17, 35, 253, 220},
 		},
 		{
 			name:                  "OnePageASHA512SeparateFile",
 			data:                  bytes.Repeat([]byte{'a'}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: false,
-			expectedHash:          []byte{116, 22, 252, 100, 32, 241, 254, 228, 167, 228, 110, 146, 156, 189, 6, 30, 27, 127, 94, 181, 15, 98, 173, 60, 34, 102, 92, 174, 181, 80, 205, 90, 88, 12, 125, 194, 148, 175, 184, 168, 37, 66, 127, 194, 19, 132, 93, 147, 168, 217, 227, 131, 100, 25, 213, 255, 132, 60, 196, 217, 24, 158, 1, 50},
+			expectedHash:          []byte{27, 84, 109, 4, 190, 225, 177, 159, 83, 73, 33, 224, 227, 82, 142, 149, 30, 62, 102, 189, 11, 79, 176, 42, 161, 4, 14, 233, 132, 4, 132, 14, 188, 161, 46, 127, 237, 195, 93, 23, 174, 1, 149, 208, 98, 254, 107, 160, 97, 182, 201, 59, 121, 21, 101, 202, 40, 110, 68, 186, 253, 22, 128, 123},
 		},
 		{
 			name:                  "OnePageASHA512SameFile",
 			data:                  bytes.Repeat([]byte{'a'}, usermem.PageSize),
 			hashAlgorithms:        linux.FS_VERITY_HASH_ALG_SHA512,
 			dataAndTreeInSameFile: true,
-			expectedHash:          []byte{116, 22, 252, 100, 32, 241, 254, 228, 167, 228, 110, 146, 156, 189, 6, 30, 27, 127, 94, 181, 15, 98, 173, 60, 34, 102, 92, 174, 181, 80, 205, 90, 88, 12, 125, 194, 148, 175, 184, 168, 37, 66, 127, 194, 19, 132, 93, 147, 168, 217, 227, 131, 100, 25, 213, 255, 132, 60, 196, 217, 24, 158, 1, 50},
+			expectedHash:          []byte{27, 84, 109, 4, 190, 225, 177, 159, 83, 73, 33, 224, 227, 82, 142, 149, 30, 62, 102, 189, 11, 79, 176, 42, 161, 4, 14, 233, 132, 4, 132, 14, 188, 161, 46, 127, 237, 195, 93, 23, 174, 1, 149, 208, 98, 254, 107, 160, 97, 182, 201, 59, 121, 21, 101, 202, 40, 110, 68, 186, 253, 22, 128, 123},
 		},
 	}
 
@@ -322,6 +324,7 @@ func TestGenerate(t *testing.T) {
 				UID:                   defaultUID,
 				GID:                   defaultGID,
 				Children:              make(map[string]struct{}),
+				Symlink:               defaultSymlink,
 				HashAlgorithms:        tc.hashAlgorithms,
 				TreeReader:            &tree,
 				TreeWriter:            &tree,
@@ -364,6 +367,7 @@ func prepareVerify(t *testing.T, dataSize int64, hashAlgorithm int, dataAndTreeI
 		UID:                   defaultUID,
 		GID:                   defaultGID,
 		Children:              make(map[string]struct{}),
+		Symlink:               defaultSymlink,
 		HashAlgorithms:        hashAlgorithm,
 		TreeReader:            &tree,
 		TreeWriter:            &tree,
@@ -392,6 +396,7 @@ func prepareVerify(t *testing.T, dataSize int64, hashAlgorithm int, dataAndTreeI
 		UID:                   defaultUID,
 		GID:                   defaultGID,
 		Children:              make(map[string]struct{}),
+		Symlink:               defaultSymlink,
 		HashAlgorithms:        hashAlgorithm,
 		ReadOffset:            verifyStart,
 		ReadSize:              verifySize,
@@ -701,6 +706,45 @@ func TestVerifyModifiedChildren(t *testing.T) {
 			var buf bytes.Buffer
 			_, params := prepareVerify(t, usermem.PageSize /* dataSize */, tc.hashAlgorithm, tc.dataAndTreeInSameFile, 0 /* verifyStart */, 0 /* verifySize */, &buf)
 			params.Children["abc"] = struct{}{}
+			if _, err := Verify(&params); errors.Is(err, nil) {
+				t.Errorf("Verification succeeded when expected to fail")
+			}
+		})
+	}
+}
+
+func TestVerifyModifiedSymlink(t *testing.T) {
+	testCases := []struct {
+		name                  string
+		hashAlgorithm         int
+		dataAndTreeInSameFile bool
+	}{
+		{
+			name:                  "SHA256SeparateFile",
+			hashAlgorithm:         linux.FS_VERITY_HASH_ALG_SHA256,
+			dataAndTreeInSameFile: false,
+		},
+		{
+			name:                  "SHA512SeparateFile",
+			hashAlgorithm:         linux.FS_VERITY_HASH_ALG_SHA512,
+			dataAndTreeInSameFile: false,
+		},
+		{
+			name:                  "SHA256SameFile",
+			hashAlgorithm:         linux.FS_VERITY_HASH_ALG_SHA256,
+			dataAndTreeInSameFile: true,
+		},
+		{
+			name:                  "SHA512SameFile",
+			hashAlgorithm:         linux.FS_VERITY_HASH_ALG_SHA512,
+			dataAndTreeInSameFile: true,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			_, params := prepareVerify(t, usermem.PageSize /* dataSize */, tc.hashAlgorithm, tc.dataAndTreeInSameFile, 0 /* verifyStart */, 0 /* verifySize */, &buf)
+			params.Symlink = modifiedSymlink
 			if _, err := Verify(&params); errors.Is(err, nil) {
 				t.Errorf("Verification succeeded when expected to fail")
 			}

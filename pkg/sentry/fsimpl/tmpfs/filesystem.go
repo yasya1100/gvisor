@@ -458,8 +458,17 @@ func (d *dentry) open(ctx context.Context, rp *vfs.ResolvingPath, opts *vfs.Open
 		}
 		return &fd.vfsfd, nil
 	case *symlink:
-		// TODO(gvisor.dev/issue/2782): Can't open symlinks without O_PATH.
-		return nil, syserror.ELOOP
+		var fd regularFileFD
+		fd.LockFD.Init(&d.inode.locks)
+		if err := fd.vfsfd.Init(&fd, opts.Flags, rp.Mount(), &d.vfsd, &vfs.FileDescriptionOptions{AllowDirectIO: true}); err != nil {
+			return nil, err
+		}
+		if fd.vfsfd.IsWritable() {
+			fsmetric.TmpfsOpensW.Increment()
+		} else if fd.vfsfd.IsReadable() {
+			fsmetric.TmpfsOpensRO.Increment()
+		}
+		return &fd.vfsfd, nil
 	case *namedPipe:
 		return impl.pipe.Open(ctx, rp.Mount(), &d.vfsd, opts.Flags, &d.inode.locks)
 	case *deviceFile:

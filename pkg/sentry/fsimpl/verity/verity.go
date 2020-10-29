@@ -320,6 +320,16 @@ func (fstype FilesystemType) GetFilesystem(ctx context.Context, vfsObj *vfs.Virt
 	d.hash = make([]byte, len(iopts.RootHash))
 	d.childrenNames = make(map[string]struct{})
 
+	if d.isSymlink() {
+		target, err := d.readlink(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		d.symlink = target
+	} else {
+		d.symlink = ""
+	}
+
 	if !fs.allowRuntimeEnable {
 		// Get children names from the underlying file system.
 		offString, err := vfsObj.GetXattrAt(ctx, creds, &vfs.PathOperation{
@@ -419,6 +429,9 @@ type dentry struct {
 	uid  uint32
 	gid  uint32
 	size uint32
+
+	// symlink is the symlink target in the underlying filesystem.
+	symlink string
 
 	// parent is the dentry corresponding to this dentry's parent directory.
 	// name is this dentry's name in parent. If this dentry is a filesystem
@@ -744,8 +757,9 @@ func (fd *fileDescription) Seek(ctx context.Context, offset int64, whence int32)
 // file /foo/bar, a Merkle tree file /foo/.merkle.verity.bar is generated. The
 // hash of the generated Merkle tree and the data size is returned.  If fd
 // points to a regular file, the data is the content of the file. If fd points
-// to a directory, the data is all hahes of its children, written to the Merkle
-// tree file.
+// to a directory, the data is all hashes of its children, written to the Merkle
+// tree file. If fd points to a symlink, the data is empty and nothing is written
+// to the Merkle tree file.
 //
 // Preconditions: fd.d.fs.verityMu must be locked.
 func (fd *fileDescription) generateMerkleLocked(ctx context.Context) ([]byte, uint64, error) {
@@ -786,6 +800,7 @@ func (fd *fileDescription) generateMerkleLocked(ctx context.Context) ([]byte, ui
 		params.UID = stat.UID
 		params.GID = stat.GID
 		params.DataAndTreeInSameFile = false
+		params.Symlink = ""
 	case linux.S_IFDIR:
 		// For a directory, generate a Merkle tree based on the hashes
 		// of its children that has already been written to the Merkle
@@ -808,6 +823,29 @@ func (fd *fileDescription) generateMerkleLocked(ctx context.Context) ([]byte, ui
 		params.UID = stat.UID
 		params.GID = stat.GID
 		params.DataAndTreeInSameFile = true
+		params.Symlink = ""
+	case linux.S_IFLNK:
+		// For a symlink, do not generate a merkle tree and store the hash of the symlink
+		// target and name in the parent.
+		var err error
+
+		stat, err := fd.lowerFD.Stat(ctx, vfs.StatOptions{})
+		if err != nil {
+			return nil, 0, err
+		}
+
+		target, err := fd.d.readlink(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		params.Size = int64(stat.Size)
+		params.Name = fd.d.name
+		params.Mode = uint32(stat.Mode)
+		params.UID = stat.UID
+		params.GID = stat.GID
+		params.DataAndTreeInSameFile = false
+		params.Symlink = target
 	default:
 		// TODO(b/167728857): Investigate whether and how we should
 		// enable other types of file.

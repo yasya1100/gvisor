@@ -19,6 +19,8 @@ package testutil
 import (
 	"fmt"
 	"math/rand"
+	"reflect"
+	"strings"
 
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/buffer"
@@ -126,4 +128,68 @@ func MakeRandPkt(transportHeaderLength int, extraHeaderReserveLength int, viewSi
 		panic(fmt.Sprintf("rand.Read: %s", err))
 	}
 	return pkt
+}
+
+func checkFieldCounts(ref, multi reflect.Value) error {
+	refTypeName := ref.Type().Name()
+	multiTypeName := multi.Type().Name()
+	refNumField := ref.NumField()
+	multiNumField := multi.NumField()
+
+	if refNumField != multiNumField {
+		return fmt.Errorf("type %s has an incorrect number of fields: got = %d, want = %d (same as type %s)", multiTypeName, multiNumField, refNumField, refTypeName)
+	}
+
+	return nil
+}
+
+func validateField(ref reflect.Value, refName string, m tcpip.MultiCounterStat, multiName string) error {
+	s, ok := ref.Addr().Interface().(**tcpip.StatCounter)
+	if !ok {
+		return fmt.Errorf("expected ref type's to be *StatCounter, but its type is %s", ref.Type().Elem().Name())
+	}
+
+	// The field names are expected to match (case insensitive).
+	if !strings.EqualFold(refName, multiName) {
+		return fmt.Errorf("wrong field name: got = %s, want = %s", multiName, refName)
+	}
+
+	base := (*s).Value()
+	m.Increment()
+	if (*s).Value() != base+1 {
+		return fmt.Errorf("updates to the '%s MultiCounterStat' counters are not reflected in the '%s CounterStat'", multiName, refName)
+	}
+
+	return nil
+}
+
+// ValidateMultiCounterStats verifies that the MultiCounterStat fields in multi
+// are set to the correct StatCounter in a and b.
+func ValidateMultiCounterStats(a, b, multi reflect.Value) error {
+	if err := checkFieldCounts(a, multi); err != nil {
+		return err
+	}
+	if err := checkFieldCounts(b, multi); err != nil {
+		return err
+	}
+
+	for i := 0; i < multi.NumField(); i++ {
+		multiName := multi.Type().Field(i).Name
+		multiUnsafe := unsafeConvert(multi.Field(i))
+
+		if m, ok := multiUnsafe.Addr().Interface().(*tcpip.MultiCounterStat); ok {
+			if err := validateField(unsafeConvert(a.Field(i)), a.Type().Field(i).Name, *m, multiName); err != nil {
+				return err
+			}
+			if err := validateField(unsafeConvert(b.Field(i)), a.Type().Field(i).Name, *m, multiName); err != nil {
+				return err
+			}
+		} else {
+			if err := ValidateMultiCounterStats(a.Field(i), b.Field(i), multi.Field(i)); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

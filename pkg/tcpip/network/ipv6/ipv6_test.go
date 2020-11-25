@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -2577,10 +2578,11 @@ func TestClearEndpointFromProtocolOnClose(t *testing.T) {
 		NetworkProtocols: []stack.NetworkProtocolFactory{NewProtocol},
 	})
 	proto := s.NetworkProtocolInstance(ProtocolNumber).(*protocol)
-	ep := proto.NewEndpoint(&testInterface{}, nil, nil, nil).(*endpoint)
+	nic := testInterface{}
+	ep := proto.NewEndpoint(&nic, nil, nil, nil).(*endpoint)
 	{
 		proto.mu.Lock()
-		_, hasEP := proto.mu.eps[ep]
+		_, hasEP := proto.mu.eps[nic.ID()]
 		proto.mu.Unlock()
 		if !hasEP {
 			t.Fatalf("expected protocol to have ep = %p in set of endpoints", ep)
@@ -2591,7 +2593,7 @@ func TestClearEndpointFromProtocolOnClose(t *testing.T) {
 
 	{
 		proto.mu.Lock()
-		_, hasEP := proto.mu.eps[ep]
+		_, hasEP := proto.mu.eps[nic.ID()]
 		proto.mu.Unlock()
 		if hasEP {
 			t.Fatalf("unexpectedly found ep = %p in set of protocol's endpoints", ep)
@@ -3041,5 +3043,25 @@ func TestForwarding(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMultiCounterStatsInitialization(t *testing.T) {
+	s := stack.New(stack.Options{
+		NetworkProtocols: []stack.NetworkProtocolFactory{NewProtocol},
+	})
+	proto := s.NetworkProtocolInstance(ProtocolNumber).(*protocol)
+	nic := testInterface{}
+	ep := proto.NewEndpoint(&nic, nil, nil, nil).(*endpoint)
+	// At that point, the Stack's stats and the NetworkEndpoint's stats are
+	// supposed to be bound.
+	refStack := s.Stats()
+	refEP := ep.stats.localStats
+	multi := ep.stats.multiCounterStats
+	if err := testutil.ValidateMultiCounterStats(reflect.ValueOf(&refStack.IP).Elem(), reflect.ValueOf(&refEP.IP).Elem(), reflect.ValueOf(&multi.ip).Elem()); err != nil {
+		t.Error(err)
+	}
+	if err := testutil.ValidateMultiCounterStats(reflect.ValueOf(&refStack.ICMP.V6).Elem(), reflect.ValueOf(&refEP.ICMP).Elem(), reflect.ValueOf(&multi.icmp).Elem()); err != nil {
+		t.Error(err)
 	}
 }

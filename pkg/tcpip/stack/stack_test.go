@@ -188,6 +188,11 @@ func (f *fakeNetworkEndpoint) Close() {
 	f.AddressableEndpointState.Cleanup()
 }
 
+// Stats implements stack.NetworkEndpoint.
+func (f *fakeNetworkEndpoint) Stats() stack.NetworkEndpointStats {
+	return nil
+}
+
 // fakeNetworkProtocol is a network-layer protocol descriptor. It aggregates the
 // number of packets sent and received via endpoints of this protocol. The index
 // where packets are added is given by the packet's destination address MOD 10.

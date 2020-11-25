@@ -1056,6 +1056,9 @@ type NICInfo struct {
 
 	Stats NICStats
 
+	// NetStats has the stats of each NetworkEndpoint bound to that NIC.
+	NetStats map[tcpip.NetworkProtocolNumber]NetworkEndpointStats
+
 	// Context is user-supplied data optionally supplied in CreateNICWithOptions.
 	// See type NICOptions for more details.
 	Context NICContext
@@ -1087,6 +1090,12 @@ func (s *Stack) NICInfo() map[tcpip.NICID]NICInfo {
 			Promiscuous: nic.Promiscuous(),
 			Loopback:    nic.IsLoopback(),
 		}
+
+		netStats := make(map[tcpip.NetworkProtocolNumber]NetworkEndpointStats)
+		for proto, netEP := range nic.networkEndpoints {
+			netStats[proto] = netEP.Stats()
+		}
+
 		nics[id] = NICInfo{
 			Name:              nic.name,
 			LinkAddress:       nic.LinkEndpoint.LinkAddress(),
@@ -1094,6 +1103,7 @@ func (s *Stack) NICInfo() map[tcpip.NICID]NICInfo {
 			Flags:             flags,
 			MTU:               nic.LinkEndpoint.MTU(),
 			Stats:             nic.stats,
+			NetStats:          netStats,
 			Context:           nic.context,
 			ARPHardwareType:   nic.LinkEndpoint.ARPHardwareType(),
 		}

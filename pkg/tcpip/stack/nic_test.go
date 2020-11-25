@@ -99,6 +99,11 @@ func (e *testIPv6Endpoint) InvalidateDefaultRouter(rtr tcpip.Address) {
 	e.invalidatedRtr = rtr
 }
 
+// Stats implements stack.NetworkEndpoint.
+func (e *testIPv6Endpoint) Stats() NetworkEndpointStats {
+	return nil
+}
+
 var _ NetworkProtocol = (*testIPv6Protocol)(nil)
 
 // An IPv6 NetworkProtocol that supports the bare minimum to make a stack

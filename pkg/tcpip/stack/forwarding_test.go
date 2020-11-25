@@ -141,6 +141,11 @@ func (f *fwdTestNetworkEndpoint) Close() {
 	f.AddressableEndpointState.Cleanup()
 }
 
+// Stats implements stack.NetworkEndpoint.
+func (f *fwdTestNetworkEndpoint) Stats() NetworkEndpointStats {
+	return nil
+}
+
 // fwdTestNetworkProtocol is a network-layer protocol that implements Address
 // resolution.
 type fwdTestNetworkProtocol struct {

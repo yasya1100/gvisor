@@ -167,13 +167,13 @@ func (mld *mldState) sendQueuedReports() {
 //
 // Precondition: mld.ep.mu must be read locked.
 func (mld *mldState) writePacket(destAddress, groupAddress tcpip.Address, mldType header.ICMPv6Type) (bool, *tcpip.Error) {
-	sentStats := mld.ep.protocol.stack.Stats().ICMP.V6.PacketsSent
-	var mldStat *tcpip.StatCounter
+	sentStats := mld.ep.stats.icmp.packetsSent
+	var mldStat tcpip.MultiCounterStat
 	switch mldType {
 	case header.ICMPv6MulticastListenerReport:
-		mldStat = sentStats.MulticastListenerReport
+		mldStat = sentStats.multicastListenerReport
 	case header.ICMPv6MulticastListenerDone:
-		mldStat = sentStats.MulticastListenerDone
+		mldStat = sentStats.multicastListenerDone
 	default:
 		panic(fmt.Sprintf("unrecognized mld type = %d", mldType))
 	}
@@ -254,7 +254,7 @@ func (mld *mldState) writePacket(destAddress, groupAddress tcpip.Address, mldTyp
 		TTL:      header.MLDHopLimit,
 	}, extensionHeaders)
 	if err := mld.ep.nic.WritePacketToRemote(header.EthernetAddressFromMulticastIPv6Address(destAddress), nil /* gso */, ProtocolNumber, pkt); err != nil {
-		sentStats.Dropped.Increment()
+		sentStats.dropped.Increment()
 		return false, err
 	}
 	mldStat.Increment()

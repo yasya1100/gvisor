@@ -996,7 +996,7 @@ func getSockOptSocket(t *kernel.Task, s socket.SocketOps, ep commonEndpoint, fam
 			return nil, syserr.ErrInvalidArgument
 		}
 
-		size, err := ep.GetSockOptInt(tcpip.SendBufferSizeOption)
+		size, err := ep.SocketOptions().GetSendBufferSize()
 		if err != nil {
 			return nil, syserr.TranslateNetstackError(err)
 		}
@@ -1768,8 +1768,21 @@ func setSockOptSocket(t *kernel.Task, s socket.SocketOps, ep commonEndpoint, nam
 			return syserr.ErrInvalidArgument
 		}
 
+		family, skType, skProto := s.Type()
+		// TODO(gvisor.dev/issue/5132): We currently do not support
+		// setting this option for unix sockets.
+		if family == linux.AF_UNIX {
+			return nil
+		}
+
 		v := usermem.ByteOrder.Uint32(optVal)
-		return syserr.TranslateNetstackError(ep.SetSockOptInt(tcpip.SendBufferSizeOption, int(v)))
+		if isTCPSocket(skType, skProto) {
+			ep.SocketOptions().SetTCPSendBufferSize(int64(v), true)
+			return nil
+		}
+
+		ep.SocketOptions().SetSendBufferSize(int64(v), true)
+		return nil
 
 	case linux.SO_RCVBUF:
 		if len(optVal) < sizeOfInt32 {

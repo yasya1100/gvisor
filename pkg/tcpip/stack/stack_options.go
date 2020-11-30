@@ -14,7 +14,11 @@
 
 package stack
 
-import "gvisor.dev/gvisor/pkg/tcpip"
+import (
+	"fmt"
+
+	"gvisor.dev/gvisor/pkg/tcpip"
+)
 
 const (
 	// MinBufferSize is the smallest size of a receive or send buffer.
@@ -103,4 +107,17 @@ func (s *Stack) Option(option interface{}) *tcpip.Error {
 	default:
 		return tcpip.ErrUnknownProtocolOption
 	}
+}
+
+// GetSockOpt implements StackHandler.GetSockOpt.
+func (s *Stack) GetSockOpt(stackOption tcpip.StackOption) (min, max int64) {
+	switch stackOption {
+	case tcpip.SendBufferOption:
+		var ss SendBufferSizeOption
+		if err := s.Option(&ss); err != nil {
+			panic(fmt.Sprintf("s.Option(%#v) = %s", ss, err))
+		}
+		return int64(ss.Min), int64(ss.Max)
+	}
+	return MinBufferSize, DefaultMaxBufferSize
 }

@@ -544,7 +544,6 @@ type endpoint struct {
 	// When the send side is closed, the protocol goroutine is notified via
 	// sndCloseWaker, and sndClosed is set to true.
 	sndBufMu      sync.Mutex `state:"nosave"`
-	sndBufSize    int
 	sndBufUsed    int
 	sndClosed     bool
 	sndBufInQueue seqnum.Size
@@ -856,7 +855,6 @@ func newEndpoint(s *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQue
 		waiterQueue: waiterQueue,
 		state:       StateInitial,
 		rcvBufSize:  DefaultReceiveBufferSize,
-		sndBufSize:  DefaultSendBufferSize,
 		sndMTU:      int(math.MaxInt32),
 		keepalive: keepalive{
 			// Linux defaults.
@@ -869,13 +867,14 @@ func newEndpoint(s *stack.Stack, netProto tcpip.NetworkProtocolNumber, waiterQue
 		windowClamp:   DefaultReceiveBufferSize,
 		maxSynRetries: DefaultSynRetries,
 	}
-	e.ops.InitHandler(e)
+	e.ops.InitHandler(e, e.stack)
 	e.ops.SetMulticastLoop(true)
 	e.ops.SetQuickAck(true)
+	e.ops.SetTCPSendBufferSize(DefaultSendBufferSize, false /*notify*/)
 
 	var ss tcpip.TCPSendBufferSizeRangeOption
 	if err := s.TransportProtocolOption(ProtocolNumber, &ss); err == nil {
-		e.sndBufSize = ss.Default
+		e.ops.SetTCPSendBufferSize(int64(ss.Default), false /*notify*/)
 	}
 
 	var rs tcpip.TCPReceiveBufferSizeRangeOption
@@ -952,7 +951,8 @@ func (e *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 		// Determine if the endpoint is writable if requested.
 		if (mask & waiter.EventOut) != 0 {
 			e.sndBufMu.Lock()
-			if e.sndClosed || e.sndBufUsed < e.sndBufSize {
+			sndBufSize, _ := e.ops.GetSendBufferSize()
+			if e.sndClosed || e.sndBufUsed < int(sndBufSize) {
 				result |= waiter.EventOut
 			}
 			e.sndBufMu.Unlock()
@@ -1415,7 +1415,8 @@ func (e *endpoint) isEndpointWritableLocked() (int, *tcpip.Error) {
 		return 0, tcpip.ErrClosedForSend
 	}
 
-	avail := e.sndBufSize - e.sndBufUsed
+	sndBufSize, _ := e.ops.GetSendBufferSize()
+	avail := int(sndBufSize) - e.sndBufUsed
 	if avail <= 0 {
 		return 0, tcpip.ErrWouldBlock
 	}
@@ -1664,6 +1665,32 @@ func (e *endpoint) OnCorkOptionSet(v bool) {
 	}
 }
 
+// OnSendBufferSizeOptionSet implements tcpip.SocketOptionsHandler.OnSendBufferSizeOptionSet.
+// TODO(b/176170271): Notify waiters after size has grown.
+func (e *endpoint) OnSendBufferSizeOptionSet(sendBufferSize int64) int64 {
+	// Make sure the send buffer size is within the min and max
+	// allowed.
+	var ss tcpip.TCPSendBufferSizeRangeOption
+	if err := e.stack.TransportProtocolOption(ProtocolNumber, &ss); err != nil {
+		panic(fmt.Sprintf("e.stack.TransportProtocolOption(%d, %#v) = %s", ProtocolNumber, &ss, err))
+	}
+
+	v := sendBufferSize
+	if v > int64(ss.Max) {
+		v = int64(ss.Max)
+	}
+
+	if v < math.MaxInt32/tcpip.PacketOverheadFactor {
+		v *= tcpip.PacketOverheadFactor
+		if v < int64(ss.Min) {
+			v = int64(ss.Min)
+		}
+	} else {
+		v = math.MaxInt32
+	}
+	return v
+}
+
 // SetSockOptInt sets a socket option.
 func (e *endpoint) SetSockOptInt(opt tcpip.SockOptInt, v int) *tcpip.Error {
 	// Lower 2 bits represents ECN bits. RFC 3168, section 23.1
@@ -1756,31 +1783,6 @@ func (e *endpoint) SetSockOptInt(opt tcpip.SockOptInt, v int) *tcpip.Error {
 
 		e.rcvListMu.Unlock()
 		e.UnlockUser()
-
-	case tcpip.SendBufferSizeOption:
-		// Make sure the send buffer size is within the min and max
-		// allowed.
-		var ss tcpip.TCPSendBufferSizeRangeOption
-		if err := e.stack.TransportProtocolOption(ProtocolNumber, &ss); err != nil {
-			panic(fmt.Sprintf("e.stack.TransportProtocolOption(%d, %#v) = %s", ProtocolNumber, &ss, err))
-		}
-
-		if v > ss.Max {
-			v = ss.Max
-		}
-
-		if v < math.MaxInt32/SegOverheadFactor {
-			v *= SegOverheadFactor
-			if v < ss.Min {
-				v = ss.Min
-			}
-		} else {
-			v = math.MaxInt32
-		}
-
-		e.sndBufMu.Lock()
-		e.sndBufSize = v
-		e.sndBufMu.Unlock()
 
 	case tcpip.TTLOption:
 		e.LockUser()
@@ -1971,12 +1973,6 @@ func (e *endpoint) GetSockOptInt(opt tcpip.SockOptInt) (int, *tcpip.Error) {
 
 	case tcpip.ReceiveQueueSizeOption:
 		return e.readyReceiveSize()
-
-	case tcpip.SendBufferSizeOption:
-		e.sndBufMu.Lock()
-		v := e.sndBufSize
-		e.sndBufMu.Unlock()
-		return v, nil
 
 	case tcpip.ReceiveBufferSizeOption:
 		e.rcvListMu.Lock()
@@ -2777,13 +2773,14 @@ func (e *endpoint) HandleControlPacket(id stack.TransportEndpointID, typ stack.C
 // updateSndBufferUsage is called by the protocol goroutine when room opens up
 // in the send buffer. The number of newly available bytes is v.
 func (e *endpoint) updateSndBufferUsage(v int) {
+	sendBufferSize, _ := e.ops.GetSendBufferSize()
 	e.sndBufMu.Lock()
-	notify := e.sndBufUsed >= e.sndBufSize>>1
+	notify := e.sndBufUsed >= int(sendBufferSize)>>1
 	e.sndBufUsed -= v
-	// We only notify when there is half the sndBufSize available after
+	// We only notify when there is half the sendBufferSize available after
 	// a full buffer event occurs. This ensures that we don't wake up
 	// writers to queue just 1-2 segments and go back to sleep.
-	notify = notify && e.sndBufUsed < e.sndBufSize>>1
+	notify = notify && e.sndBufUsed < int(sendBufferSize)>>1
 	e.sndBufMu.Unlock()
 
 	if notify {
@@ -2995,8 +2992,9 @@ func (e *endpoint) completeState() stack.TCPEndpointState {
 	s.SACK.ReceivedBlocks, s.SACK.MaxSACKED = e.scoreboard.Copy()
 
 	// Copy endpoint send state.
+	sndBufSize, _ := e.ops.GetSendBufferSize()
 	e.sndBufMu.Lock()
-	s.SndBufSize = e.sndBufSize
+	s.SndBufSize = int(sndBufSize)
 	s.SndBufUsed = e.sndBufUsed
 	s.SndClosed = e.sndClosed
 	s.SndBufInQueue = e.sndBufInQueue

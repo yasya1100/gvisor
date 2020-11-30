@@ -370,6 +370,8 @@ func (u *uniqueIDGenerator) UniqueID() uint64 {
 // Stack is a networking stack, with all supported protocols, NICs, and route
 // table.
 type Stack struct {
+	tcpip.DefaultStackHandler
+
 	transportProtocols map[tcpip.TransportProtocolNumber]*transportProtocolState
 	networkProtocols   map[tcpip.NetworkProtocolNumber]NetworkProtocol
 	linkAddrResolvers  map[tcpip.NetworkProtocolNumber]LinkAddressResolver

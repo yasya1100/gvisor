@@ -57,84 +57,112 @@ var (
 	remoteIPv6Addr = tcpip.Address(net.ParseIP("200b::1").To16())
 )
 
+func rxICMPv4(e *channel.Endpoint, src, dst tcpip.Address) {
+	totalLen := header.IPv4MinimumSize + header.ICMPv4MinimumSize
+	hdr := buffer.NewPrependable(totalLen)
+	pkt := header.ICMPv4(hdr.Prepend(header.ICMPv4MinimumSize))
+	pkt.SetType(header.ICMPv4Echo)
+	pkt.SetCode(0)
+	pkt.SetChecksum(0)
+	pkt.SetChecksum(^header.Checksum(pkt, 0))
+	ip := header.IPv4(hdr.Prepend(header.IPv4MinimumSize))
+	ip.Encode(&header.IPv4Fields{
+		TotalLength: uint16(totalLen),
+		Protocol:    uint8(icmp.ProtocolNumber4),
+		TTL:         ttl,
+		SrcAddr:     src,
+		DstAddr:     dst,
+	})
+	ip.SetChecksum(^ip.CalculateChecksum())
+
+	e.InjectInbound(header.IPv4ProtocolNumber, stack.NewPacketBuffer(stack.PacketBufferOptions{
+		Data: hdr.View().ToVectorisedView(),
+	}))
+}
+
+func rxICMPv6(e *channel.Endpoint, src, dst tcpip.Address) {
+	totalLen := header.IPv6MinimumSize + header.ICMPv6MinimumSize
+	hdr := buffer.NewPrependable(totalLen)
+	pkt := header.ICMPv6(hdr.Prepend(header.ICMPv6MinimumSize))
+	pkt.SetType(header.ICMPv6EchoRequest)
+	pkt.SetCode(0)
+	pkt.SetChecksum(0)
+	pkt.SetChecksum(header.ICMPv6Checksum(pkt, src, dst, buffer.VectorisedView{}))
+	ip := header.IPv6(hdr.Prepend(header.IPv6MinimumSize))
+	ip.Encode(&header.IPv6Fields{
+		PayloadLength: header.ICMPv6MinimumSize,
+		NextHeader:    uint8(icmp.ProtocolNumber6),
+		HopLimit:      ttl,
+		SrcAddr:       src,
+		DstAddr:       dst,
+	})
+
+	e.InjectInbound(header.IPv6ProtocolNumber, stack.NewPacketBuffer(stack.PacketBufferOptions{
+		Data: hdr.View().ToVectorisedView(),
+	}))
+}
+
 // TestPingMulticastBroadcast tests that responding to an Echo Request destined
 // to a multicast or broadcast address uses a unicast source address for the
 // reply.
 func TestPingMulticastBroadcast(t *testing.T) {
 	const nicID = 1
 
-	rxIPv4ICMP := func(e *channel.Endpoint, dst tcpip.Address) {
-		totalLen := header.IPv4MinimumSize + header.ICMPv4MinimumSize
-		hdr := buffer.NewPrependable(totalLen)
-		pkt := header.ICMPv4(hdr.Prepend(header.ICMPv4MinimumSize))
-		pkt.SetType(header.ICMPv4Echo)
-		pkt.SetCode(0)
-		pkt.SetChecksum(0)
-		pkt.SetChecksum(^header.Checksum(pkt, 0))
-		ip := header.IPv4(hdr.Prepend(header.IPv4MinimumSize))
-		ip.Encode(&header.IPv4Fields{
-			TotalLength: uint16(totalLen),
-			Protocol:    uint8(icmp.ProtocolNumber4),
-			TTL:         ttl,
-			SrcAddr:     remoteIPv4Addr,
-			DstAddr:     dst,
-		})
-		ip.SetChecksum(^ip.CalculateChecksum())
-
-		e.InjectInbound(header.IPv4ProtocolNumber, stack.NewPacketBuffer(stack.PacketBufferOptions{
-			Data: hdr.View().ToVectorisedView(),
-		}))
-	}
-
-	rxIPv6ICMP := func(e *channel.Endpoint, dst tcpip.Address) {
-		totalLen := header.IPv6MinimumSize + header.ICMPv6MinimumSize
-		hdr := buffer.NewPrependable(totalLen)
-		pkt := header.ICMPv6(hdr.Prepend(header.ICMPv6MinimumSize))
-		pkt.SetType(header.ICMPv6EchoRequest)
-		pkt.SetCode(0)
-		pkt.SetChecksum(0)
-		pkt.SetChecksum(header.ICMPv6Checksum(pkt, remoteIPv6Addr, dst, buffer.VectorisedView{}))
-		ip := header.IPv6(hdr.Prepend(header.IPv6MinimumSize))
-		ip.Encode(&header.IPv6Fields{
-			PayloadLength: header.ICMPv6MinimumSize,
-			NextHeader:    uint8(icmp.ProtocolNumber6),
-			HopLimit:      ttl,
-			SrcAddr:       remoteIPv6Addr,
-			DstAddr:       dst,
-		})
-
-		e.InjectInbound(header.IPv6ProtocolNumber, stack.NewPacketBuffer(stack.PacketBufferOptions{
-			Data: hdr.View().ToVectorisedView(),
-		}))
-	}
-
 	tests := []struct {
-		name    string
-		dstAddr tcpip.Address
+		name        string
+		protoNum    tcpip.NetworkProtocolNumber
+		rxICMP      func(*channel.Endpoint, tcpip.Address, tcpip.Address)
+		srcAddr     tcpip.Address
+		dstAddr     tcpip.Address
+		expectedSrc tcpip.Address
 	}{
 		{
-			name:    "IPv4 unicast",
-			dstAddr: ipv4Addr.Address,
+			name:        "IPv4 unicast",
+			protoNum:    header.IPv4ProtocolNumber,
+			rxICMP:      rxICMPv4,
+			srcAddr:     remoteIPv4Addr,
+			dstAddr:     ipv4Addr.Address,
+			expectedSrc: ipv4Addr.Address,
 		},
 		{
-			name:    "IPv4 directed broadcast",
-			dstAddr: ipv4SubnetBcast,
+			name:        "IPv4 directed broadcast",
+			protoNum:    header.IPv4ProtocolNumber,
+			rxICMP:      rxICMPv4,
+			srcAddr:     remoteIPv4Addr,
+			dstAddr:     ipv4SubnetBcast,
+			expectedSrc: ipv4Addr.Address,
 		},
 		{
-			name:    "IPv4 broadcast",
-			dstAddr: header.IPv4Broadcast,
+			name:        "IPv4 broadcast",
+			protoNum:    header.IPv4ProtocolNumber,
+			rxICMP:      rxICMPv4,
+			srcAddr:     remoteIPv4Addr,
+			dstAddr:     header.IPv4Broadcast,
+			expectedSrc: ipv4Addr.Address,
 		},
 		{
-			name:    "IPv4 all-systems multicast",
-			dstAddr: header.IPv4AllSystems,
+			name:        "IPv4 all-systems multicast",
+			protoNum:    header.IPv4ProtocolNumber,
+			rxICMP:      rxICMPv4,
+			srcAddr:     remoteIPv4Addr,
+			dstAddr:     header.IPv4AllSystems,
+			expectedSrc: ipv4Addr.Address,
 		},
 		{
-			name:    "IPv6 unicast",
-			dstAddr: ipv6Addr.Address,
+			name:        "IPv6 unicast",
+			protoNum:    header.IPv6ProtocolNumber,
+			rxICMP:      rxICMPv6,
+			srcAddr:     remoteIPv6Addr,
+			dstAddr:     ipv6Addr.Address,
+			expectedSrc: ipv6Addr.Address,
 		},
 		{
-			name:    "IPv6 all-nodes multicast",
-			dstAddr: header.IPv6AllNodesMulticastAddress,
+			name:        "IPv6 all-nodes multicast",
+			protoNum:    header.IPv6ProtocolNumber,
+			rxICMP:      rxICMPv6,
+			srcAddr:     remoteIPv6Addr,
+			dstAddr:     header.IPv6AllNodesMulticastAddress,
+			expectedSrc: ipv6Addr.Address,
 		},
 	}
 
@@ -171,44 +199,29 @@ func TestPingMulticastBroadcast(t *testing.T) {
 				},
 			})
 
-			var rxICMP func(*channel.Endpoint, tcpip.Address)
-			var expectedSrc tcpip.Address
-			var expectedDst tcpip.Address
-			var protoNum tcpip.NetworkProtocolNumber
-			switch l := len(test.dstAddr); l {
-			case header.IPv4AddressSize:
-				rxICMP = rxIPv4ICMP
-				expectedSrc = ipv4Addr.Address
-				expectedDst = remoteIPv4Addr
-				protoNum = header.IPv4ProtocolNumber
-			case header.IPv6AddressSize:
-				rxICMP = rxIPv6ICMP
-				expectedSrc = ipv6Addr.Address
-				expectedDst = remoteIPv6Addr
-				protoNum = header.IPv6ProtocolNumber
-			default:
-				t.Fatalf("got unexpected address length = %d bytes", l)
-			}
-
-			rxICMP(e, test.dstAddr)
+			test.rxICMP(e, test.srcAddr, test.dstAddr)
 			pkt, ok := e.Read()
 			if !ok {
 				t.Fatal("expected ICMP response")
 			}
 
-			if pkt.Route.LocalAddress != expectedSrc {
-				t.Errorf("got pkt.Route.LocalAddress = %s, want = %s", pkt.Route.LocalAddress, expectedSrc)
+			if pkt.Route.LocalAddress != test.expectedSrc {
+				t.Errorf("got pkt.Route.LocalAddress = %s, want = %s", pkt.Route.LocalAddress, test.expectedSrc)
 			}
-			if pkt.Route.RemoteAddress != expectedDst {
-				t.Errorf("got pkt.Route.RemoteAddress = %s, want = %s", pkt.Route.RemoteAddress, expectedDst)
+			// The destination of the response packet should be the source of the
+			// original packet.
+			if pkt.Route.RemoteAddress != test.srcAddr {
+				t.Errorf("got pkt.Route.RemoteAddress = %s, want = %s", pkt.Route.RemoteAddress, test.srcAddr)
 			}
 
-			src, dst := s.NetworkProtocolInstance(protoNum).ParseAddresses(stack.PayloadSince(pkt.Pkt.NetworkHeader()))
-			if src != expectedSrc {
-				t.Errorf("got pkt source = %s, want = %s", src, expectedSrc)
+			src, dst := s.NetworkProtocolInstance(test.protoNum).ParseAddresses(stack.PayloadSince(pkt.Pkt.NetworkHeader()))
+			if src != test.expectedSrc {
+				t.Errorf("got pkt source = %s, want = %s", src, test.expectedSrc)
 			}
-			if dst != expectedDst {
-				t.Errorf("got pkt destination = %s, want = %s", dst, expectedDst)
+			// The destination of the response packet should be the source of the
+			// original packet.
+			if dst != test.srcAddr {
+				t.Errorf("got pkt destination = %s, want = %s", dst, test.srcAddr)
 			}
 		})
 	}

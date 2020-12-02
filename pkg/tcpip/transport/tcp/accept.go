@@ -218,7 +218,7 @@ func (l *listenContext) createConnectingEndpoint(s *segment, iss seqnum.Value, i
 	n.boundNICID = s.nicID
 	n.route = route
 	n.effectiveNetProtos = []tcpip.NetworkProtocolNumber{s.netProto}
-	n.rcvBufSize = int(l.rcvWnd)
+	n.ops.SetReceiveBufferSize(int(l.rcvWnd), true)
 	n.amss = calculateAdvertisedMSS(n.userMSS, n.route)
 	n.setEndpointState(StateConnecting)
 

@@ -161,6 +161,8 @@ func NewPair(ctx context.Context, stype linux.SockType, uid UniqueIDProvider) (E
 		writeQueue: q1,
 	}
 
+	a.ops.SetReceiveBufferSize(-1, false)
+	b.ops.SetReceiveBufferSize(-1, false)
 	return a, b
 }
 

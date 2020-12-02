@@ -185,15 +185,17 @@ func (e *endpoint) Resume(s *stack.Stack) {
 	case StateInitial, StateBound, StateListen, StateConnecting, StateEstablished:
 		var ss tcpip.TCPSendBufferSizeRangeOption
 		if err := e.stack.TransportProtocolOption(ProtocolNumber, &ss); err == nil {
-			if e.sndBufSize < ss.Min || e.sndBufSize > ss.Max {
-				panic(fmt.Sprintf("endpoint.sndBufSize %d is outside the min and max allowed [%d, %d]", e.sndBufSize, ss.Min, ss.Max))
+			sendBufferSize := e.ops.GetSendBufferSize()
+			if sendBufferSize < ss.Min || sendBufferSize > ss.Max {
+				panic(fmt.Sprintf("endpoint sendBufferSize %d is outside the min and max allowed [%d, %d]", sendBufferSize, ss.Min, ss.Max))
 			}
 		}
 
 		var rs tcpip.TCPReceiveBufferSizeRangeOption
 		if err := e.stack.TransportProtocolOption(ProtocolNumber, &rs); err == nil {
-			if e.rcvBufSize < rs.Min || e.rcvBufSize > rs.Max {
-				panic(fmt.Sprintf("endpoint.rcvBufSize %d is outside the min and max allowed [%d, %d]", e.rcvBufSize, rs.Min, rs.Max))
+			rcvBufSize := e.ops.GetReceiveBufferSize()
+			if rcvBufSize < rs.Min || rcvBufSize > rs.Max {
+				panic(fmt.Sprintf("endpoint.rcvBufSize %d is outside the min and max allowed [%d, %d]", rcvBufSize, rs.Min, rs.Max))
 			}
 		}
 	}

@@ -16,6 +16,8 @@ package tcpip
 
 import (
 	"sync/atomic"
+
+	"gvisor.dev/gvisor/pkg/sync"
 )
 
 // SocketOptionsHandler holds methods that help define endpoint specific
@@ -37,6 +39,27 @@ type SocketOptionsHandler interface {
 
 	// OnCorkOptionSet is invoked when TCP_CORK is set for an endpoint.
 	OnCorkOptionSet(v bool)
+
+	// LastError is invoked when SO_ERROR is read for an endpoint.
+	LastError() *Error
+
+	// HasNIC is invoked to check if the NIC is valid for SO_BINDTODEVICE.
+	HasNIC(v int32) bool
+
+	// IsUnixSocket is invoked to check if the socket is of unix domain.
+	IsUnixSocket() bool
+
+	// OnSendBufferSizeOptionSet is invoked to set the SO_SNDBUFSIZE.
+	OnSendBufferSizeOptionSet(size int) int
+
+	// OnSendBufferSizeOptionGet is invoked to get the SO_SNDBUFSIZE.
+	OnSendBufferSizeOptionGet() int
+
+	// OnReceiveBufferSizeOptionSet is invoked to set the SO_RCVBUFSIZE.
+	OnReceiveBufferSizeOptionSet(size int) int
+
+	// OnReceiveBufferSizeOptionGet is invoked to get the SO_RCVBUFSIZE.
+	OnReceiveBufferSizeOptionGet() int
 }
 
 // DefaultSocketOptionsHandler is an embeddable type that implements no-op
@@ -60,6 +83,45 @@ func (*DefaultSocketOptionsHandler) OnDelayOptionSet(bool) {}
 // OnCorkOptionSet implements SocketOptionsHandler.OnCorkOptionSet.
 func (*DefaultSocketOptionsHandler) OnCorkOptionSet(bool) {}
 
+// LastError implements SocketOptionsHandler.LastError.
+func (*DefaultSocketOptionsHandler) LastError() *Error {
+	return nil
+}
+
+// HasNIC implements SocketOptionsHandler.HasNIC.
+func (*DefaultSocketOptionsHandler) HasNIC(int32) bool {
+	return false
+}
+
+// IsUnixSocket implements SocketOptionsHandler.IsUnixSocket.
+func (*DefaultSocketOptionsHandler) IsUnixSocket() bool {
+	return false
+}
+
+// OnSendBufferSizeOptionSet implements
+// SocketOptionsHandler.OnSendBufferSizeOptionSet.
+func (*DefaultSocketOptionsHandler) OnSendBufferSizeOptionSet(sendBufferSize int) int {
+	return sendBufferSize
+}
+
+// OnSendBufferSizeOptionGet implements
+// SocketOptionsHandler.OnSendBufferSizeOptionGet.
+func (*DefaultSocketOptionsHandler) OnSendBufferSizeOptionGet() int {
+	return 0
+}
+
+// OnReceiveBufferSizeOptionSet implements
+// SocketOptionsHandler.OnReceiveBufferSizeOptionSet.
+func (*DefaultSocketOptionsHandler) OnReceiveBufferSizeOptionSet(receiveBufferSize int) int {
+	return receiveBufferSize
+}
+
+// OnReceiveBufferSizeOptionGet implements
+// SocketOptionsHandler.OnReceiveBufferSizeOptionGet.
+func (*DefaultSocketOptionsHandler) OnReceiveBufferSizeOptionGet() int {
+	return 0
+}
+
 // SocketOptions contains all the variables which store values for SOL_SOCKET,
 // SOL_IP, SOL_IPV6 and SOL_TCP level options.
 //
@@ -69,24 +131,24 @@ type SocketOptions struct {
 
 	// These fields are accessed and modified using atomic operations.
 
-	// broadcastEnabled determines whether datagram sockets are allowed to send
-	// packets to a broadcast address.
+	// broadcastEnabled determines whether datagram sockets are allowed to
+	// send packets to a broadcast address.
 	broadcastEnabled uint32
 
-	// passCredEnabled determines whether SCM_CREDENTIALS socket control messages
-	// are enabled.
+	// passCredEnabled determines whether SCM_CREDENTIALS socket control
+	// messages are enabled.
 	passCredEnabled uint32
 
 	// noChecksumEnabled determines whether UDP checksum is disabled while
 	// transmitting for this socket.
 	noChecksumEnabled uint32
 
-	// reuseAddressEnabled determines whether Bind() should allow reuse of local
-	// address.
+	// reuseAddressEnabled determines whether Bind() should allow reuse of
+	// local address.
 	reuseAddressEnabled uint32
 
-	// reusePortEnabled determines whether to permit multiple sockets to be bound
-	// to an identical socket address.
+	// reusePortEnabled determines whether to permit multiple sockets to be
+	// bound to an identical socket address.
 	reusePortEnabled uint32
 
 	// keepAliveEnabled determines whether TCP keepalive is enabled for this
@@ -130,6 +192,22 @@ type SocketOptions struct {
 	// corkOptionEnabled is used to specify if data should be held until segments
 	// are full by the TCP transport protocol.
 	corkOptionEnabled uint32
+
+	// bindToDevice determines the device to which the socket is bound.
+	bindToDevice int32
+
+	// mu protects the access to the below fields.
+	mu sync.Mutex `state:"nosave"`
+
+	// receiveBufferSize determines the receive buffer size for this socket.
+	receiveBufferSize int
+
+	// sendBufferSize determines the send buffer size for this socket.
+	sendBufferSize int
+
+	// linger determines the amount of time the socket should linger before
+	// close. We currently implement this option for TCP socket only.
+	linger LingerOption
 }
 
 // InitHandler initializes the handler. This must be called before using the
@@ -301,4 +379,102 @@ func (so *SocketOptions) GetCorkOption() bool {
 func (so *SocketOptions) SetCorkOption(v bool) {
 	storeAtomicBool(&so.corkOptionEnabled, v)
 	so.handler.OnCorkOptionSet(v)
+}
+
+// GetLastError gets value for SO_ERROR option.
+func (so *SocketOptions) GetLastError() *Error {
+	return so.handler.LastError()
+}
+
+// GetOutOfBandInline gets value for SO_OOBINLINE option.
+func (so *SocketOptions) GetOutOfBandInline() bool {
+	return true
+}
+
+// SetOutOfBandInline sets value for SO_OOBINLINE option. We currently do not
+// support disabling this option.
+func (so *SocketOptions) SetOutOfBandInline(v bool) {}
+
+// GetLinger gets value for SO_LINGER option.
+func (so *SocketOptions) GetLinger() LingerOption {
+	so.mu.Lock()
+	linger := so.linger
+	so.mu.Unlock()
+	return linger
+}
+
+// SetLinger sets value for SO_LINGER option.
+func (so *SocketOptions) SetLinger(linger LingerOption) {
+	so.mu.Lock()
+	so.linger = linger
+	so.mu.Unlock()
+}
+
+// GetBindToDevice gets value for SO_BINDTODEVICE option.
+func (so *SocketOptions) GetBindToDevice() int32 {
+	return atomic.LoadInt32(&so.bindToDevice)
+}
+
+// SetBindToDevice sets value for SO_BINDTODEVICE option.
+func (so *SocketOptions) SetBindToDevice(bindToDevice int32) *Error {
+	if !so.handler.HasNIC(bindToDevice) {
+		return ErrUnknownDevice
+	}
+
+	atomic.StoreInt32(&so.bindToDevice, bindToDevice)
+	return nil
+}
+
+// GetSendBufferSize gets value for SO_SNDBUF option.
+func (so *SocketOptions) GetSendBufferSize() int {
+	if so.handler.IsUnixSocket() {
+		return so.handler.OnSendBufferSizeOptionGet()
+	}
+	so.mu.Lock()
+	v := so.sendBufferSize
+	so.mu.Unlock()
+	return v
+}
+
+// SetSendBufferSize sets value for SO_SNDBUF option.
+func (so *SocketOptions) SetSendBufferSize(sendBufferSize int, isDefault bool) {
+	// We currently do not support setting this option for unix sockets.
+	if so.handler.IsUnixSocket() {
+		return
+	}
+
+	v := sendBufferSize
+	if !isDefault {
+		v = so.handler.OnSendBufferSizeOptionSet(sendBufferSize)
+	}
+	so.mu.Lock()
+	so.sendBufferSize = v
+	so.mu.Unlock()
+}
+
+// GetReceiveBufferSize gets value for SO_RCVBUF option.
+func (so *SocketOptions) GetReceiveBufferSize() int {
+	if so.handler.IsUnixSocket() {
+		return so.handler.OnReceiveBufferSizeOptionGet()
+	}
+	so.mu.Lock()
+	v := so.receiveBufferSize
+	so.mu.Unlock()
+	return v
+}
+
+// SetReceiveBufferSize sets value for SO_RCVBUF option.
+func (so *SocketOptions) SetReceiveBufferSize(receiveBufferSize int, isDefault bool) {
+	// We currently do not support setting this option for unix sockets.
+	if so.handler.IsUnixSocket() {
+		return
+	}
+
+	v := receiveBufferSize
+	if !isDefault {
+		v = so.handler.OnReceiveBufferSizeOptionSet(receiveBufferSize)
+	}
+	so.mu.Lock()
+	so.receiveBufferSize = v
+	so.mu.Unlock()
 }

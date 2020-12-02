@@ -36,31 +36,6 @@ func (p *packet) loadData(data buffer.VectorisedView) {
 	p.data = data
 }
 
-// beforeSave is invoked by stateify.
-func (ep *endpoint) beforeSave() {
-	// Stop incoming packets from being handled (and mutate endpoint state).
-	// The lock will be released after saveRcvBufSizeMax(), which would have
-	// saved ep.rcvBufSizeMax and set it to 0 to continue blocking incoming
-	// packets.
-	ep.rcvMu.Lock()
-}
-
-// saveRcvBufSizeMax is invoked by stateify.
-func (ep *endpoint) saveRcvBufSizeMax() int {
-	max := ep.rcvBufSizeMax
-	// Make sure no new packets will be handled regardless of the lock.
-	ep.rcvBufSizeMax = 0
-	// Release the lock acquired in beforeSave() so regular endpoint closing
-	// logic can proceed after save.
-	ep.rcvMu.Unlock()
-	return max
-}
-
-// loadRcvBufSizeMax is invoked by stateify.
-func (ep *endpoint) loadRcvBufSizeMax(max int) {
-	ep.rcvBufSizeMax = max
-}
-
 // afterLoad is invoked by stateify.
 func (ep *endpoint) afterLoad() {
 	// StackFromEnv is a stack used specifically for save/restore.

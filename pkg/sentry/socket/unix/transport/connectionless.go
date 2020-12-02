@@ -45,6 +45,7 @@ func NewConnectionless(ctx context.Context) Endpoint {
 	q.InitRefs()
 	ep.receiver = &queueReceiver{readQueue: &q}
 	ep.ops.InitHandler(ep)
+	ep.ops.SetReceiveBufferSize(-1, false)
 	return ep
 }
 

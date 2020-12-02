@@ -756,9 +756,7 @@ func (c *Context) Create(epRcvBuf int) {
 	}
 
 	if epRcvBuf != -1 {
-		if err := c.EP.SetSockOptInt(tcpip.ReceiveBufferSizeOption, epRcvBuf); err != nil {
-			c.t.Fatalf("SetSockOpt failed failed: %v", err)
-		}
+		c.EP.SocketOptions().SetReceiveBufferSize(epRcvBuf, false)
 	}
 }
 

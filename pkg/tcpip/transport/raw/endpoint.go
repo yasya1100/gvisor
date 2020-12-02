@@ -68,25 +68,21 @@ type endpoint struct {
 
 	// The following fields are used to manage the receive queue and are
 	// protected by rcvMu.
-	rcvMu         sync.Mutex `state:"nosave"`
-	rcvList       rawPacketList
-	rcvBufSize    int
-	rcvBufSizeMax int `state:".(int)"`
-	rcvClosed     bool
+	rcvMu      sync.Mutex `state:"nosave"`
+	rcvList    rawPacketList
+	rcvBufSize int
+	rcvClosed  bool
 
 	// The following fields are protected by mu.
-	mu            sync.RWMutex `state:"nosave"`
-	sndBufSize    int
-	sndBufSizeMax int
-	closed        bool
-	connected     bool
-	bound         bool
+	mu         sync.RWMutex `state:"nosave"`
+	sndBufSize int
+	closed     bool
+	connected  bool
+	bound      bool
 	// route is the route to a remote network endpoint. It is set via
 	// Connect(), and is valid only when conneted is true.
 	route *stack.Route                 `state:"manual"`
 	stats tcpip.TransportEndpointStats `state:"nosave"`
-	// linger is used for SO_LINGER socket option.
-	linger tcpip.LingerOption
 
 	// owner is used to get uid and gid of the packet.
 	owner tcpip.PacketOwner
@@ -111,30 +107,30 @@ func newEndpoint(s *stack.Stack, netProto tcpip.NetworkProtocolNumber, transProt
 			NetProto:   netProto,
 			TransProto: transProto,
 		},
-		waiterQueue:   waiterQueue,
-		rcvBufSizeMax: 32 * 1024,
-		sndBufSizeMax: 32 * 1024,
-		associated:    associated,
+		waiterQueue: waiterQueue,
+		associated:  associated,
 	}
 	e.ops.InitHandler(e)
 	e.ops.SetHeaderIncluded(!associated)
+	e.ops.SetSendBufferSize(32*1024, true)
+	e.ops.SetReceiveBufferSize(32*1024, true)
 
 	// Override with stack defaults.
 	var ss stack.SendBufferSizeOption
 	if err := s.Option(&ss); err == nil {
-		e.sndBufSizeMax = ss.Default
+		e.ops.SetSendBufferSize(ss.Default, true)
 	}
 
 	var rs stack.ReceiveBufferSizeOption
 	if err := s.Option(&rs); err == nil {
-		e.rcvBufSizeMax = rs.Default
+		e.ops.SetReceiveBufferSize(rs.Default, true)
 	}
 
 	// Unassociated endpoints are write-only and users call Write() with IP
 	// headers included. Because they're write-only, We don't need to
 	// register with the stack.
 	if !associated {
-		e.rcvBufSizeMax = 0
+		e.ops.SetReceiveBufferSize(0, true)
 		e.waiterQueue = nil
 		return e, nil
 	}
@@ -520,77 +516,60 @@ func (e *endpoint) Readiness(mask waiter.EventMask) waiter.EventMask {
 
 // SetSockOpt implements tcpip.Endpoint.SetSockOpt.
 func (e *endpoint) SetSockOpt(opt tcpip.SettableSocketOption) *tcpip.Error {
-	switch v := opt.(type) {
+	switch opt.(type) {
 	case *tcpip.SocketDetachFilterOption:
-		return nil
-
-	case *tcpip.LingerOption:
-		e.mu.Lock()
-		e.linger = *v
-		e.mu.Unlock()
 		return nil
 
 	default:
 		return tcpip.ErrUnknownProtocolOption
 	}
+}
+
+// OnSendBufferSizeOptionSet implements tcpip.SocketOptionsHandler.OnSendBufferSizeOptionSet.
+func (e *endpoint) OnSendBufferSizeOptionSet(sendBufferSize int) int {
+	// Make sure the send buffer size is within the min and max
+	// allowed.
+	var ss stack.SendBufferSizeOption
+	if err := e.stack.Option(&ss); err != nil {
+		panic(fmt.Sprintf("s.Option(%#v) = %s", ss, err))
+	}
+	v := sendBufferSize
+	if v > ss.Max {
+		v = ss.Max
+	}
+	if v < ss.Min {
+		v = ss.Min
+	}
+	return v
+}
+
+// OnReceiveBufferSizeOptionSet implements tcpip.SocketOptionsHandler.OnReceiveBufferSizeOptionSet.
+func (e *endpoint) OnReceiveBufferSizeOptionSet(rcvBufSize int) int {
+	// Make sure the receive buffer size is within the min and max
+	// allowed.
+	var rs stack.ReceiveBufferSizeOption
+	if err := e.stack.Option(&rs); err != nil {
+		panic(fmt.Sprintf("s.Option(%#v) = %s", rs, err))
+	}
+
+	v := rcvBufSize
+	if v > rs.Max {
+		v = rs.Max
+	}
+	if v < rs.Min {
+		v = rs.Min
+	}
+	return v
 }
 
 // SetSockOptInt implements tcpip.Endpoint.SetSockOptInt.
 func (e *endpoint) SetSockOptInt(opt tcpip.SockOptInt, v int) *tcpip.Error {
-	switch opt {
-	case tcpip.SendBufferSizeOption:
-		// Make sure the send buffer size is within the min and max
-		// allowed.
-		var ss stack.SendBufferSizeOption
-		if err := e.stack.Option(&ss); err != nil {
-			panic(fmt.Sprintf("s.Option(%#v) = %s", ss, err))
-		}
-		if v > ss.Max {
-			v = ss.Max
-		}
-		if v < ss.Min {
-			v = ss.Min
-		}
-		e.mu.Lock()
-		e.sndBufSizeMax = v
-		e.mu.Unlock()
-		return nil
-
-	case tcpip.ReceiveBufferSizeOption:
-		// Make sure the receive buffer size is within the min and max
-		// allowed.
-		var rs stack.ReceiveBufferSizeOption
-		if err := e.stack.Option(&rs); err != nil {
-			panic(fmt.Sprintf("s.Option(%#v) = %s", rs, err))
-		}
-		if v > rs.Max {
-			v = rs.Max
-		}
-		if v < rs.Min {
-			v = rs.Min
-		}
-		e.rcvMu.Lock()
-		e.rcvBufSizeMax = v
-		e.rcvMu.Unlock()
-		return nil
-
-	default:
-		return tcpip.ErrUnknownProtocolOption
-	}
+	return tcpip.ErrUnknownProtocolOption
 }
 
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
 func (e *endpoint) GetSockOpt(opt tcpip.GettableSocketOption) *tcpip.Error {
-	switch o := opt.(type) {
-	case *tcpip.LingerOption:
-		e.mu.Lock()
-		*o = e.linger
-		e.mu.Unlock()
-		return nil
-
-	default:
-		return tcpip.ErrUnknownProtocolOption
-	}
+	return tcpip.ErrUnknownProtocolOption
 }
 
 // GetSockOptInt implements tcpip.Endpoint.GetSockOptInt.
@@ -603,18 +582,6 @@ func (e *endpoint) GetSockOptInt(opt tcpip.SockOptInt) (int, *tcpip.Error) {
 			p := e.rcvList.Front()
 			v = p.data.Size()
 		}
-		e.rcvMu.Unlock()
-		return v, nil
-
-	case tcpip.SendBufferSizeOption:
-		e.mu.Lock()
-		v := e.sndBufSizeMax
-		e.mu.Unlock()
-		return v, nil
-
-	case tcpip.ReceiveBufferSizeOption:
-		e.rcvMu.Lock()
-		v := e.rcvBufSizeMax
 		e.rcvMu.Unlock()
 		return v, nil
 
@@ -642,7 +609,7 @@ func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
 		return
 	}
 
-	if e.rcvBufSize >= e.rcvBufSizeMax {
+	if e.rcvBufSize >= e.ops.GetReceiveBufferSize() {
 		e.rcvMu.Unlock()
 		e.stack.Stats().DroppedPackets.Increment()
 		e.stats.ReceiveErrors.ReceiveBufferOverflow.Increment()

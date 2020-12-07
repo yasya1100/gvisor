@@ -36,6 +36,10 @@ func Syncfs(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscal
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	return 0, nil, file.SyncFS(t)
 }
 
@@ -48,6 +52,10 @@ func Fsync(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	return 0, nil, file.Sync(t)
 }
@@ -78,6 +86,10 @@ func SyncFileRange(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// TODO(gvisor.dev/issue/1897): Currently, the only file syncing we support
 	// is a full-file sync, i.e. fsync(2). As a result, there are severe

@@ -98,6 +98,14 @@ TEST(ChmodTest, FchmodatBadF) {
   ASSERT_THAT(fchmodat(-1, "foo", 0444, 0), SyscallFailsWithErrno(EBADF));
 }
 
+TEST(ChmodTest, FchmodBadOpenOpathFlag) {
+  SKIP_IF(IsRunningWithVFS1());
+  auto file = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateFile());
+  FileDescriptor fd = ASSERT_NO_ERRNO_AND_VALUE(Open(file.path(), O_PATH));
+
+  ASSERT_THAT(fchmod(fd.get(), 0444), SyscallFailsWithErrno(EBADF));
+}
+
 TEST(ChmodTest, FchmodatNotDir) {
   ASSERT_THAT(fchmodat(-1, "", 0444, 0), SyscallFailsWithErrno(ENOENT));
 }

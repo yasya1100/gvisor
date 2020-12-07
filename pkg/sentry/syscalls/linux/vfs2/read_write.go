@@ -46,6 +46,10 @@ func Read(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.SyscallC
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	// Check that the size is legitimate.
 	si := int(size)
 	if si < 0 {
@@ -76,6 +80,10 @@ func Readv(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Get the destination of the read.
 	dst, err := t.IovecsIOSequence(addr, iovcnt, usermem.IOOpts{
@@ -153,6 +161,10 @@ func Pread64(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysca
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	// Check that the offset is legitimate and does not overflow.
 	if offset < 0 || offset+int64(size) < 0 {
 		return 0, nil, syserror.EINVAL
@@ -189,6 +201,10 @@ func Preadv(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscal
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Check that the offset is legitimate.
 	if offset < 0 {
@@ -227,6 +243,10 @@ func Preadv2(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysca
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Check that the offset is legitimate.
 	if offset < -1 {
@@ -316,6 +336,10 @@ func Write(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	// Check that the size is legitimate.
 	si := int(size)
 	if si < 0 {
@@ -346,6 +370,10 @@ func Writev(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscal
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Get the source of the write.
 	src, err := t.IovecsIOSequence(addr, iovcnt, usermem.IOOpts{
@@ -423,6 +451,10 @@ func Pwrite64(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysc
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	// Check that the offset is legitimate and does not overflow.
 	if offset < 0 || offset+int64(size) < 0 {
 		return 0, nil, syserror.EINVAL
@@ -459,6 +491,10 @@ func Pwritev(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysca
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Check that the offset is legitimate.
 	if offset < 0 {
@@ -497,6 +533,10 @@ func Pwritev2(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysc
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Check that the offset is legitimate.
 	if offset < -1 {
@@ -603,6 +643,10 @@ func Lseek(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	newoff, err := file.Seek(t, offset, whence)
 	return uintptr(newoff), nil, err
 }
@@ -618,6 +662,10 @@ func Readahead(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	// Check that the file is readable.
 	if !file.IsReadable() {

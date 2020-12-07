@@ -68,6 +68,10 @@ func Fchmod(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscal
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	return 0, nil, file.SetStat(t, vfs.SetStatOptions{
 		Stat: linux.Statx{
 			Mask: linux.STATX_MODE,
@@ -153,6 +157,10 @@ func Fchown(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscal
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	var opts vfs.SetStatOptions
 	if err := populateSetStatOptionsForChown(t, owner, group, &opts); err != nil {
 		return 0, nil, err
@@ -199,6 +207,10 @@ func Ftruncate(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	if !file.IsWritable() {
 		return 0, nil, syserror.EINVAL
 	}
@@ -225,6 +237,10 @@ func Fallocate(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	if !file.IsWritable() {
 		return 0, nil, syserror.EBADF

@@ -74,6 +74,10 @@ func Flistxattr(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sy
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	names, err := file.ListXattr(t, uint64(size))
 	if err != nil {
 		return 0, nil, err
@@ -142,6 +146,10 @@ func Fgetxattr(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	name, err := copyInXattrName(t, nameAddr)
 	if err != nil {
@@ -224,6 +232,10 @@ func Fsetxattr(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 	}
 	defer file.DecRef(t)
 
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
+
 	name, err := copyInXattrName(t, nameAddr)
 	if err != nil {
 		return 0, nil, err
@@ -282,6 +294,10 @@ func Fremovexattr(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.
 		return 0, nil, syserror.EBADF
 	}
 	defer file.DecRef(t)
+
+	if file.StatusFlags()&linux.O_PATH != 0 {
+		return 0, nil, syserror.EBADF
+	}
 
 	name, err := copyInXattrName(t, nameAddr)
 	if err != nil {

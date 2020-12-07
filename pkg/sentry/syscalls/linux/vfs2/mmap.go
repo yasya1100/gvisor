@@ -74,6 +74,10 @@ func Mmap(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.SyscallC
 		}
 		defer file.DecRef(t)
 
+		if file.StatusFlags()&linux.O_PATH != 0 {
+			return 0, nil, syserror.EBADF
+		}
+
 		// mmap unconditionally requires that the FD is readable.
 		if !file.IsReadable() {
 			return 0, nil, syserror.EACCES

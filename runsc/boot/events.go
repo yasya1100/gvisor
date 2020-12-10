@@ -22,14 +22,15 @@ import (
 // Event struct for encoding the event data to JSON. Corresponds to runc's
 // main.event struct.
 type Event struct {
-	Type string      `json:"type"`
-	ID   string      `json:"id"`
-	Data interface{} `json:"data,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id"`
+	Data Stats  `json:"data"`
 }
 
 // Stats is the runc specific stats structure for stability when encoding and
 // decoding stats.
 type Stats struct {
+	CPU    CPU    `json:"cpu"`
 	Memory Memory `json:"memory"`
 	Pids   Pids   `json:"pids"`
 }
@@ -58,6 +59,19 @@ type Memory struct {
 	Raw       map[string]uint64 `json:"raw,omitempty"`
 }
 
+// CPU contains stats on the CPU.
+type CPU struct {
+	Usage CPUUsage `json:"usage"`
+}
+
+// CPUUsage contains stats on CPU usage.
+type CPUUsage struct {
+	Kernel uint64   `json:"kernel,omitempty"`
+	User   uint64   `json:"user,omitempty"`
+	Total  uint64   `json:"total,omitempty"`
+	PerCPU []uint64 `json:"percpu,omitempty"`
+}
+
 // Event gets the events from the container.
 func (cm *containerManager) Event(_ *struct{}, out *Event) error {
 	stats := &Stats{}
@@ -67,6 +81,7 @@ func (cm *containerManager) Event(_ *struct{}, out *Event) error {
 	return nil
 }
 
+// TODO(gvisor.dev/issue/172): Per-container memory accounting.
 func (s *Stats) populateMemory(k *kernel.Kernel) {
 	mem := k.MemoryFile()
 	mem.UpdateUsage()
@@ -76,6 +91,7 @@ func (s *Stats) populateMemory(k *kernel.Kernel) {
 	}
 }
 
+// TODO(gvisor.dev/issue/172): Per-container PID lists.
 func (s *Stats) populatePIDs(k *kernel.Kernel) {
 	s.Pids.Current = uint64(len(k.TaskSet().Root.ThreadGroups()))
 }

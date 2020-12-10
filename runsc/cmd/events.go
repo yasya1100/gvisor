@@ -17,11 +17,15 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/subcommands"
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/runsc/boot"
+	"gvisor.dev/gvisor/runsc/cgroup"
 	"gvisor.dev/gvisor/runsc/config"
 	"gvisor.dev/gvisor/runsc/container"
 	"gvisor.dev/gvisor/runsc/flag"
@@ -79,6 +83,11 @@ func (evs *Events) Execute(ctx context.Context, f *flag.FlagSet, args ...interfa
 		Fatalf("loading sandbox: %v", err)
 	}
 
+	cgroup, err := sandboxCgroup(c)
+	if err != nil {
+		log.Debugf("no cgroup found for container, stats will be limited: %v", err)
+	}
+
 	// Repeatedly get stats from the container.
 	for {
 		// Get the event and print it as JSON.
@@ -90,6 +99,8 @@ func (evs *Events) Execute(ctx context.Context, f *flag.FlagSet, args ...interfa
 			}
 		}
 		log.Debugf("Events: %+v", ev)
+
+		populateFromCgroup(cgroup, ev, c, conf)
 
 		// err must be preserved because it is used below when breaking
 		// out of the loop.
@@ -111,4 +122,54 @@ func (evs *Events) Execute(ctx context.Context, f *flag.FlagSet, args ...interfa
 
 		time.Sleep(time.Duration(evs.intervalSec) * time.Second)
 	}
+}
+
+func sandboxCgroup(cont *container.Container) (*cgroup.Cgroup, error) {
+	paths, err := cgroup.LoadPaths(strconv.Itoa(cont.SandboxPid()))
+	if err != nil {
+		return nil, err
+	}
+	cpuacctPath, ok := paths["cpuacct"]
+	if !ok {
+		return nil, errors.New("no cpuacct controller found")
+	}
+	return cgroup.NewFromPath(cpuacctPath)
+}
+
+func populateFromCgroup(cgroup *cgroup.Cgroup, event *boot.Event, cont *container.Container, conf *config.Config) {
+	if cgroup == nil || cont.Status != container.Running {
+		return
+	}
+
+	// Get the number of running containers in the sandbox. Since cgroup
+	// will give us the CPU usage of the entire sandbox, each container
+	// is attributed a 1/(# containers) fraction of usage.
+	ids, err := container.List(conf.RootDir)
+	if err != nil {
+		log.Warningf("Failed to get container list: %v", err)
+		return
+	}
+	nContainers := uint64(1)
+	for _, id := range ids {
+		// Don't double-count ourselves.
+		if id == cont.ID {
+			continue
+		}
+		otherContainer, err := container.LoadAndCheck(conf.RootDir, id)
+		if err != nil {
+			log.Warningf("Failed to load container %q: %v", id, err)
+			return
+		}
+		// Only count currently running containers in our sandbox.
+		if otherContainer.Sandbox.ID == cont.Sandbox.ID && otherContainer.Status == container.Running {
+			nContainers++
+		}
+	}
+
+	usage, err := cgroup.CPUUsage()
+	if err != nil {
+		log.Warningf("Error getting CPU usage for container: %v", err)
+		return
+	}
+	event.Data.CPU.Usage.Total = usage / nContainers
 }

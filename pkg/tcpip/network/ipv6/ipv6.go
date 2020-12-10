@@ -707,6 +707,15 @@ func (e *endpoint) forwardPacket(pkt *stack.PacketBuffer) *tcpip.Error {
 	}))
 }
 
+func validatePacket(pkt *stack.PacketBuffer) (header.IPv6, bool) {
+	h := header.IPv6(pkt.NetworkHeader().View())
+	if !h.IsValid(pkt.Size() + pkt.LinkHeader().View().Size()) {
+		return nil, false
+	}
+
+	return h, true
+}
+
 // HandlePacket is called by the link layer when new ipv6 packets arrive for
 // this endpoint.
 func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
@@ -718,8 +727,26 @@ func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
 		return
 	}
 
-	// Loopback traffic skips the prerouting chain.
+	h, ok := validatePacket(pkt)
+	if !ok {
+		stats.IP.MalformedPacketsReceived.Increment()
+		return
+	}
+
 	if !e.nic.IsLoopback() {
+		if !e.protocol.options.AllowExternalLoopbackTraffic {
+			if header.IsV6LoopbackAddress(h.SourceAddress()) {
+				stats.IP.InvalidSourceAddressesReceived.Increment()
+				return
+			}
+
+			if header.IsV6LoopbackAddress(h.DestinationAddress()) {
+				stats.IP.InvalidDestinationAddressesReceived.Increment()
+				return
+			}
+		}
+
+		// Loopback traffic skips the prerouting chain.
 		if ok := e.protocol.stack.IPTables().Check(stack.Prerouting, pkt, nil, nil, e.MainAddress().Address, ""); !ok {
 			// iptables is telling us to drop the packet.
 			stats.IP.IPTablesPreroutingDropped.Increment()
@@ -727,20 +754,26 @@ func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
 		}
 	}
 
-	e.handlePacket(pkt)
+	e.handleValidatedPacket(h, pkt)
 }
 
 // handlePacket is like HandlePacket except it does not perform the prerouting
-// iptables hook.
+// iptables hook and or check for loopback traffic that originated from outside
+// of the netstack (i.e. martian loopback packets).
 func (e *endpoint) handlePacket(pkt *stack.PacketBuffer) {
+	h, ok := validatePacket(pkt)
+	if !ok {
+		e.protocol.stack.Stats().IP.MalformedPacketsReceived.Increment()
+		return
+	}
+
+	e.handleValidatedPacket(h, pkt)
+}
+
+func (e *endpoint) handleValidatedPacket(h header.IPv6, pkt *stack.PacketBuffer) {
 	pkt.NICID = e.nic.ID()
 	stats := e.protocol.stack.Stats()
 
-	h := header.IPv6(pkt.NetworkHeader().View())
-	if !h.IsValid(pkt.Data.Size() + pkt.NetworkHeader().View().Size() + pkt.TransportHeader().View().Size()) {
-		stats.IP.MalformedPacketsReceived.Increment()
-		return
-	}
 	srcAddr := h.SourceAddress()
 	dstAddr := h.DestinationAddress()
 
@@ -1667,6 +1700,10 @@ type Options struct {
 
 	// MLD holds options for MLD.
 	MLD MLDOptions
+
+	// AllowExternalLoopbackTraffic indicates that the stack should allow loopback
+	// traffic that originated from outside of the netstack.
+	AllowExternalLoopbackTraffic bool
 }
 
 // NewProtocolWithOptions returns an IPv6 network protocol.

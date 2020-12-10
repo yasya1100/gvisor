@@ -548,39 +548,12 @@ func (e *endpoint) forwardPacket(pkt *stack.PacketBuffer) *tcpip.Error {
 	}))
 }
 
-// HandlePacket is called by the link layer when new ipv4 packets arrive for
-// this endpoint.
-func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
-	stats := e.protocol.stack.Stats()
-	stats.IP.PacketsReceived.Increment()
-
-	if !e.isEnabled() {
-		stats.IP.DisabledPacketsReceived.Increment()
-		return
-	}
-
-	// Loopback traffic skips the prerouting chain.
-	if !e.nic.IsLoopback() {
-		if ok := e.protocol.stack.IPTables().Check(stack.Prerouting, pkt, nil, nil, e.MainAddress().Address, ""); !ok {
-			// iptables is telling us to drop the packet.
-			stats.IP.IPTablesPreroutingDropped.Increment()
-			return
-		}
-	}
-
-	e.handlePacket(pkt)
-}
-
-// handlePacket is like HandlePacket except it does not perform the prerouting
-// iptables hook.
-func (e *endpoint) handlePacket(pkt *stack.PacketBuffer) {
-	pkt.NICID = e.nic.ID()
-	stats := e.protocol.stack.Stats()
-
+func validatePacket(pkt *stack.PacketBuffer) (header.IPv4, bool) {
 	h := header.IPv4(pkt.NetworkHeader().View())
-	if !h.IsValid(pkt.Data.Size() + pkt.NetworkHeader().View().Size() + pkt.TransportHeader().View().Size()) {
-		stats.IP.MalformedPacketsReceived.Increment()
-		return
+	// Do not include the link header's size when calculating the size of the IP
+	// packet.
+	if !h.IsValid(pkt.Size() + pkt.LinkHeader().View().Size()) {
+		return nil, false
 	}
 
 	// There has been some confusion regarding verifying checksums. We need
@@ -605,9 +578,69 @@ func (e *endpoint) handlePacket(pkt *stack.PacketBuffer) {
 	//        is all 1 bits (-0 in 1's complement arithmetic), the check
 	//        succeeds.
 	if h.CalculateChecksum() != 0xffff {
+		return nil, false
+	}
+
+	return h, true
+}
+
+// HandlePacket is called by the link layer when new ipv4 packets arrive for
+// this endpoint.
+func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
+	stats := e.protocol.stack.Stats()
+	stats.IP.PacketsReceived.Increment()
+
+	if !e.isEnabled() {
+		stats.IP.DisabledPacketsReceived.Increment()
+		return
+	}
+
+	h, ok := validatePacket(pkt)
+	if !ok {
 		stats.IP.MalformedPacketsReceived.Increment()
 		return
 	}
+
+	if !e.nic.IsLoopback() {
+		if !e.protocol.options.AllowExternalLoopbackTraffic {
+			if header.IsV4LoopbackAddress(h.SourceAddress()) {
+				stats.IP.InvalidSourceAddressesReceived.Increment()
+				return
+			}
+
+			if header.IsV4LoopbackAddress(h.DestinationAddress()) {
+				stats.IP.InvalidDestinationAddressesReceived.Increment()
+				return
+			}
+		}
+
+		// Loopback traffic skips the prerouting chain.
+		if ok := e.protocol.stack.IPTables().Check(stack.Prerouting, pkt, nil, nil, e.MainAddress().Address, ""); !ok {
+			// iptables is telling us to drop the packet.
+			stats.IP.IPTablesPreroutingDropped.Increment()
+			return
+		}
+	}
+
+	e.handleValidatedPacket(h, pkt)
+}
+
+// handlePacket is like HandlePacket except it does not perform the prerouting
+// iptables hook and or check for loopback traffic that originated from outside
+// of the netstack (i.e. martian loopback packets).
+func (e *endpoint) handlePacket(pkt *stack.PacketBuffer) {
+	h, ok := validatePacket(pkt)
+	if !ok {
+		e.protocol.stack.Stats().IP.MalformedPacketsReceived.Increment()
+		return
+	}
+
+	e.handleValidatedPacket(h, pkt)
+}
+
+func (e *endpoint) handleValidatedPacket(h header.IPv4, pkt *stack.PacketBuffer) {
+	pkt.NICID = e.nic.ID()
+	stats := e.protocol.stack.Stats()
 
 	srcAddr := h.SourceAddress()
 	dstAddr := h.DestinationAddress()
@@ -1034,6 +1067,10 @@ func hashRoute(srcAddr, dstAddr tcpip.Address, protocol tcpip.TransportProtocolN
 type Options struct {
 	// IGMP holds options for IGMP.
 	IGMP IGMPOptions
+
+	// AllowExternalLoopbackTraffic indicates that the stack should allow loopback
+	// traffic that originated from outside of the netstack.
+	AllowExternalLoopbackTraffic bool
 }
 
 // NewProtocolWithOptions returns an IPv4 network protocol.

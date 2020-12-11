@@ -1,5 +1,5 @@
 # Upload test logs on failure, if there are any.
-if [[ "${BUILDKITE_COMMAND_EXIT_STATUS}" -ne "0" ]]; then
+if test "${BUILDKITE_COMMAND_EXIT_STATUS}" -ne "0"; then
   declare log_count=0
   for log in $(make testlogs 2>/dev/null | sort | uniq); do
     buildkite-agent artifact upload "${log}"
@@ -16,6 +16,22 @@ if [[ "${BUILDKITE_COMMAND_EXIT_STATUS}" -ne "0" ]]; then
   make clean || echo "make clean failed with code $?"
   make bazel-shutdown || echo "make bazel-shutdown failed with code $?"
 fi
+
+# Upload all profiles, and embed as images.
+if test "${BUILDKITE_COMMAND_EXIT_STATUS}" -eq 0; then
+  for file in $(find /tmp/profile -name \*.pprof -print 2>/dev/null | sort); do
+    proftype=$(basename "${file}" .pprof)
+    testname=$(basename $(dirname "${file}"))
+    runtime=$(basename $(dirname $(dirname "${file}")))
+    shared_dir=${file%"${runtime}/${testname}/${proftype}.pprof"}
+    sudo go tool pprof -svg -output="${file}.svg" "${file}"
+    (cd "${shared_dir}" && buildkite-agent artifact upload "${runtime}/${testname}/${proftype}.pprof.svg")
+    echo -e '\033]1338;url='"artifact://${runtime}/${lastdir}/${proftype}.pprof.svg"';alt='"${runtime} ${proftype} profile"'\a\n'
+  done
+fi
+
+# Clear any remaining profiles.
+sudo rm -rf /tmp/profile
 
 # Kill any running containers (clear state).
 CONTAINERS="$(docker ps -q)"

@@ -15,14 +15,13 @@ package ml
 
 import (
 	"context"
+	"flag"
 	"os"
 	"testing"
 
 	"gvisor.dev/gvisor/pkg/test/dockerutil"
 	"gvisor.dev/gvisor/test/benchmarks/harness"
 )
-
-var h harness.Harness
 
 // BenchmarkTensorflow runs workloads from a TensorFlow tutorial.
 // See: https://github.com/aymericdamien/TensorFlow-Examples
@@ -38,7 +37,7 @@ func BenchmarkTensorflow(b *testing.B) {
 		"NeuralNetwork":        "3_NeuralNetworks/neural_network.py",
 	}
 
-	machine, err := h.GetMachine()
+	machine, err := harness.GetMachine()
 	if err != nil {
 		b.Fatalf("failed to get machine: %v", err)
 	}
@@ -49,15 +48,17 @@ func BenchmarkTensorflow(b *testing.B) {
 			ctx := context.Background()
 
 			b.ResetTimer()
+			b.StopTimer()
+
 			for i := 0; i < b.N; i++ {
-				b.StopTimer()
 				container := machine.GetContainer(ctx, b)
 				defer container.CleanUp(ctx)
 				if err := harness.DropCaches(machine); err != nil {
 					b.Skipf("failed to drop caches: %v. You probably need root.", err)
 				}
-				b.StartTimer()
 
+				// Run tensorflow.
+				b.StartTimer()
 				if out, err := container.Run(ctx, dockerutil.RunOpts{
 					Image:   "benchmarks/tensorflow",
 					Env:     []string{"PYTHONPATH=$PYTHONPATH:/TensorFlow-Examples/examples"},
@@ -65,13 +66,18 @@ func BenchmarkTensorflow(b *testing.B) {
 				}, "python", workload); err != nil {
 					b.Fatalf("failed to run container: %v logs: %s", err, out)
 				}
+				b.StopTimer()
 			}
 		})
 	}
-
 }
 
 func TestMain(m *testing.M) {
-	h.Init()
+	harness.Init()
+	// The tensorflow benchmark above is a fixed benchmark,
+	// which cannot scale with N. Therefore, we override the
+	// benchtime parameter to only run once, regardless of
+	// the value of the flag passed here.
+	flag.Set("test.benchtime", "1X")
 	os.Exit(m.Run())
 }

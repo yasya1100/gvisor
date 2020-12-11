@@ -26,8 +26,6 @@ import (
 	"gvisor.dev/gvisor/pkg/urpc"
 )
 
-var errNoOutput = errors.New("no output writer provided")
-
 // ProfileOpts contains options for the StartCPUProfile/Goroutine RPC call.
 type ProfileOpts struct {
 	// File is the filesystem path for the profile.
@@ -35,6 +33,30 @@ type ProfileOpts struct {
 
 	// FilePayload is the destination for the profiling output.
 	urpc.FilePayload
+}
+
+// CPUProfileOpts contains options specifically for CPU profiles.
+type CPUProfileOpts struct {
+	ProfileOpts
+
+	// Hz is the rate, which may be zero.
+	Hz int
+}
+
+// BlockProfileOpts contains options specifically for block profiles.
+type BlockProfileOpts struct {
+	ProfileOpts
+
+	// Rate is the block profile rate.
+	Rate int
+}
+
+// MutexProfileOpts contains options specifically for mutex profiles.
+type MutexProfileOpts struct {
+	ProfileOpts
+
+	// Fraction is the mutex profile fraction.
+	Fraction int
 }
 
 // Profile includes profile-related RPC stubs. It provides a way to
@@ -64,9 +86,9 @@ type Profile struct {
 
 // StartCPUProfile is an RPC stub which starts recording the CPU profile in a
 // file.
-func (p *Profile) StartCPUProfile(o *ProfileOpts, _ *struct{}) error {
+func (p *Profile) StartCPUProfile(o *CPUProfileOpts, _ *struct{}) error {
 	if len(o.FilePayload.Files) < 1 {
-		return errNoOutput
+		return nil // Allowed.
 	}
 
 	output, err := fd.NewFromFile(o.FilePayload.Files[0])
@@ -78,6 +100,9 @@ func (p *Profile) StartCPUProfile(o *ProfileOpts, _ *struct{}) error {
 	defer p.mu.Unlock()
 
 	// Returns an error if profiling is already started.
+	if o.Hz != 0 {
+		runtime.SetCPUProfileRate(o.Hz)
+	}
 	if err := pprof.StartCPUProfile(output); err != nil {
 		output.Close()
 		return err
@@ -106,8 +131,9 @@ func (p *Profile) StopCPUProfile(_, _ *struct{}) error {
 // HeapProfile generates a heap profile for the sentry.
 func (p *Profile) HeapProfile(o *ProfileOpts, _ *struct{}) error {
 	if len(o.FilePayload.Files) < 1 {
-		return errNoOutput
+		return nil // Allowed.
 	}
+
 	output := o.FilePayload.Files[0]
 	defer output.Close()
 	runtime.GC() // Get up-to-date statistics.
@@ -121,8 +147,9 @@ func (p *Profile) HeapProfile(o *ProfileOpts, _ *struct{}) error {
 // running goroutines.
 func (p *Profile) GoroutineProfile(o *ProfileOpts, _ *struct{}) error {
 	if len(o.FilePayload.Files) < 1 {
-		return errNoOutput
+		return nil // Allowed.
 	}
+
 	output := o.FilePayload.Files[0]
 	defer output.Close()
 	if err := pprof.Lookup("goroutine").WriteTo(output, 2); err != nil {
@@ -133,10 +160,14 @@ func (p *Profile) GoroutineProfile(o *ProfileOpts, _ *struct{}) error {
 
 // BlockProfile is an RPC stub which dumps out the stack trace that led to
 // blocking on synchronization primitives.
-func (p *Profile) BlockProfile(o *ProfileOpts, _ *struct{}) error {
+func (p *Profile) BlockProfile(o *BlockProfileOpts, _ *struct{}) error {
+	// Always set the rate.
+	defer runtime.SetBlockProfileRate(o.Rate)
+
 	if len(o.FilePayload.Files) < 1 {
-		return errNoOutput
+		return nil // Allowed.
 	}
+
 	output := o.FilePayload.Files[0]
 	defer output.Close()
 	if err := pprof.Lookup("block").WriteTo(output, 0); err != nil {
@@ -147,10 +178,14 @@ func (p *Profile) BlockProfile(o *ProfileOpts, _ *struct{}) error {
 
 // MutexProfile is an RPC stub which dumps out the stack trace of holders of
 // contended mutexes.
-func (p *Profile) MutexProfile(o *ProfileOpts, _ *struct{}) error {
+func (p *Profile) MutexProfile(o *MutexProfileOpts, _ *struct{}) error {
+	// Always set the fraction.
+	defer runtime.SetMutexProfileFraction(o.Fraction)
+
 	if len(o.FilePayload.Files) < 1 {
-		return errNoOutput
+		return nil // Allowed.
 	}
+
 	output := o.FilePayload.Files[0]
 	defer output.Close()
 	if err := pprof.Lookup("mutex").WriteTo(output, 0); err != nil {
@@ -162,7 +197,7 @@ func (p *Profile) MutexProfile(o *ProfileOpts, _ *struct{}) error {
 // StartTrace is an RPC stub which starts collection of an execution trace.
 func (p *Profile) StartTrace(o *ProfileOpts, _ *struct{}) error {
 	if len(o.FilePayload.Files) < 1 {
-		return errNoOutput
+		return nil // Allowed.
 	}
 
 	output, err := fd.NewFromFile(o.FilePayload.Files[0])

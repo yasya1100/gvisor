@@ -17,6 +17,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,19 +33,21 @@ import (
 
 // Debug implements subcommands.Command for the "debug" command.
 type Debug struct {
-	pid          int
-	stacks       bool
-	signal       int
-	profileHeap  string
-	profileCPU   string
-	profileBlock string
-	profileMutex string
-	trace        string
-	strace       string
-	logLevel     string
-	logPackets   string
-	duration     time.Duration
-	ps           bool
+	pid           int
+	stacks        bool
+	signal        int
+	profileHeap   string
+	profileCPU    string
+	profileBlock  string
+	profileMutex  string
+	blockRate     int
+	mutexFraction int
+	trace         string
+	strace        string
+	logLevel      string
+	logPackets    string
+	duration      time.Duration
+	ps            bool
 }
 
 // Name implements subcommands.Command.
@@ -69,7 +72,9 @@ func (d *Debug) SetFlags(f *flag.FlagSet) {
 	f.StringVar(&d.profileHeap, "profile-heap", "", "writes heap profile to the given file.")
 	f.StringVar(&d.profileCPU, "profile-cpu", "", "writes CPU profile to the given file.")
 	f.StringVar(&d.profileBlock, "profile-block", "", "writes block profile to the given file.")
+	f.IntVar(&d.blockRate, "profile-block-rate", 1, "set rate for block profiling.")
 	f.StringVar(&d.profileMutex, "profile-mutex", "", "writes mutex profile to the given file.")
+	f.IntVar(&d.mutexFraction, "profile-mutex-fraction", 1, "set fraction for mutex profiling.")
 	f.DurationVar(&d.duration, "duration", time.Second, "amount of time to wait for CPU and trace profiles")
 	f.StringVar(&d.trace, "trace", "", "writes an execution trace to the given file.")
 	f.IntVar(&d.signal, "signal", -1, "sends signal to the sandbox")
@@ -151,30 +156,6 @@ func (d *Debug) Execute(_ context.Context, f *flag.FlagSet, args ...interface{})
 		}
 		log.Infof("Heap profile written to %q", d.profileHeap)
 	}
-	if d.profileBlock != "" {
-		f, err := os.Create(d.profileBlock)
-		if err != nil {
-			return Errorf(err.Error())
-		}
-		defer f.Close()
-
-		if err := c.Sandbox.BlockProfile(f); err != nil {
-			return Errorf(err.Error())
-		}
-		log.Infof("Block profile written to %q", d.profileBlock)
-	}
-	if d.profileMutex != "" {
-		f, err := os.Create(d.profileMutex)
-		if err != nil {
-			return Errorf(err.Error())
-		}
-		defer f.Close()
-
-		if err := c.Sandbox.MutexProfile(f); err != nil {
-			return Errorf(err.Error())
-		}
-		log.Infof("Mutex profile written to %q", d.profileMutex)
-	}
 
 	delay := false
 	if d.profileCPU != "" {
@@ -213,7 +194,14 @@ func (d *Debug) Execute(_ context.Context, f *flag.FlagSet, args ...interface{})
 		}
 		log.Infof("Tracing started for %v, writing to %q", d.duration, d.trace)
 	}
-
+	if d.profileBlock != "" {
+		delay = true
+		c.Sandbox.BlockProfileSetRate(d.blockRate)
+	}
+	if d.profileMutex != "" {
+		delay = true
+		c.Sandbox.BlockProfileSetRate(d.blockRate)
+	}
 	if d.strace != "" || len(d.logLevel) != 0 || len(d.logPackets) != 0 {
 		args := control.LoggingArgs{}
 		switch strings.ToLower(d.strace) {
@@ -283,7 +271,43 @@ func (d *Debug) Execute(_ context.Context, f *flag.FlagSet, args ...interface{})
 	}
 
 	if delay {
-		time.Sleep(d.duration)
+		// Catch any kind of signal here, and exit gracefully.
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		select {
+		case signo := <-sigs:
+			log.Warningf("caught signal %v, exiting early.", signo)
+		case <-time.After(d.duration):
+		}
+		signal.Stop(sigs) // Next signal works.
+	}
+
+	// Collect static profiles
+	if d.profileBlock != "" {
+		f, err := os.Create(d.profileBlock)
+		if err != nil {
+			return Errorf(err.Error())
+		}
+		defer f.Close()
+
+		// Collect the profile created.
+		if err := c.Sandbox.BlockProfile(f); err != nil {
+			return Errorf(err.Error())
+		}
+		log.Infof("Block profile written to %q", d.profileBlock)
+	}
+	if d.profileMutex != "" {
+		f, err := os.Create(d.profileMutex)
+		if err != nil {
+			return Errorf(err.Error())
+		}
+		defer f.Close()
+
+		// Collect the profile created.
+		if err := c.Sandbox.MutexProfile(f); err != nil {
+			return Errorf(err.Error())
+		}
+		log.Infof("Mutex profile written to %q", d.profileMutex)
 	}
 
 	return subcommands.ExitSuccess

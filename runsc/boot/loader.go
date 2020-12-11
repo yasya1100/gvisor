@@ -598,7 +598,6 @@ func (l *Loader) run() error {
 		if err != nil {
 			return err
 		}
-
 	}
 
 	ep.tg = l.k.GlobalInit()

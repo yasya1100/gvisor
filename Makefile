@@ -305,25 +305,27 @@ containerd-tests: containerd-test-1.4.3
 ## Targets to run benchmarks. See //test/benchmarks for details.
 ##
 ##   common arguments:
-##     RUNTIME_ARGS - arguments to runsc placed in /etc/docker/daemon.json
-##       e.g. "--platform=ptrace"
-##     BENCHMARKS_PROJECT - BigQuery project to which to send data.
-##     BENCHMARKS_DATASET - BigQuery dataset to which to send data.
-##     BENCHMARKS_TABLE - BigQuery table to which to send data.
-##     BENCHMARKS_SUITE - name of the benchmark suite. See //tools/bigquery/bigquery.go.
-##     BENCHMARKS_UPLOAD - if true, upload benchmark data from the run.
-##     BENCHMARKS_OFFICIAL - marks the data as official.
+##     BENCHMARKS_PROJECT   - BigQuery project to which to send data.
+##     BENCHMARKS_DATASET   - BigQuery dataset to which to send data.
+##     BENCHMARKS_TABLE     - BigQuery table to which to send data.
+##     BENCHMARKS_SUITE     - name of the benchmark suite. See //tools/bigquery/bigquery.go.
+##     BENCHMARKS_UPLOAD    - if true, upload benchmark data from the run.
+##     BENCHMARKS_OFFICIAL  - marks the data as official.
 ##     BENCHMARKS_PLATFORMS - platforms to run benchmarks (e.g. ptrace kvm).
+##     BENCHMARKS_FILTER    - filter to be applied to the test suite.
+##     BENCHMARKS_OPTIONS   - options to be passed to the test.
 ##
-BENCHMARKS_PROJECT   := gvisor-benchmarks
-BENCHMARKS_DATASET   := kokoro
-BENCHMARKS_TABLE     := benchmarks
-BENCHMARKS_SUITE     := start
-BENCHMARKS_UPLOAD    := false
-BENCHMARKS_OFFICIAL  := false
-BENCHMARKS_PLATFORMS := ptrace
-BENCHMARKS_TARGETS   := //test/benchmarks/base:startup_test
-BENCHMARKS_ARGS      := -test.bench=. -pprof-cpu -pprof-heap -pprof-heap -pprof-block
+BENCHMARKS_PROJECT   ?= gvisor-benchmarks
+BENCHMARKS_DATASET   ?= kokoro
+BENCHMARKS_TABLE     ?= benchmarks
+BENCHMARKS_SUITE     ?= ffmpeg
+BENCHMARKS_UPLOAD    ?= false
+BENCHMARKS_OFFICIAL  ?= false
+BENCHMARKS_PLATFORMS ?= ptrace
+BENCHMARKS_TARGETS   := //test/benchmarks/media:ffmpeg_test
+BENCHMARKS_FILTER    := .
+BENCHMARKS_OPTIONS   := -test.benchtime=10s
+BENCHMARKS_ARGS      := -test.v -test.bench=$(BENCHMARKS_FILTER) -pprof-delay=3s -pprof-duration=4s -pprof-dir=/tmp/profile -pprof-cpu -pprof-heap -pprof-block -pprof-mutex $(BENCHMARKS_OPTIONS)
 
 init-benchmark-table: ## Initializes a BigQuery table with the benchmark schema.
 	@$(call run,//tools/parsers:parser,init --project=$(BENCHMARKS_PROJECT) --dataset=$(BENCHMARKS_DATASET) --table=$(BENCHMARKS_TABLE))
@@ -331,27 +333,26 @@ init-benchmark-table: ## Initializes a BigQuery table with the benchmark schema.
 
 # $(1) is the runtime name, $(2) are the arguments.
 run_benchmark = \
-  $(call header,BENCHMARK $(1) $(2)); \
-  if test "$(1)" != "runc"; then $(call install_runtime,--profile $(2)); fi \
-  @T=$$(mktemp --tmpdir logs.$(RUNTIME).XXXXXX); \
-  $(call sudo,$(BENCHMARKS_TARGETS) --runtime=$(RUNTIME) $(BENCHMARKS_ARGS) | tee $$T); \
+  ($(call header,BENCHMARK $(1) $(2)); \
+  if test "$(1)" != "runc"; then $(call install_runtime,--profile $(2)) || exit 1; fi; \
+  export T=$$(mktemp --tmpdir logs.$(RUNTIME).XXXXXX); \
+  $(call sudo,$(BENCHMARKS_TARGETS),-runtime=$(RUNTIME) $(BENCHMARKS_ARGS)) | tee $$T; \
   rc=$$?; \
-  if test $$rc -eq 0 && test "$(BENCHMARKS_UPLOAD)" == "true"; then \
-    $(call run,tools/parsers:parser parse --debug --file=$$T --runtime=$(RUNTIME) --suite_name=$(BENCHMARKS_SUITE) --project=$(BENCHMARKS_PROJECT) --dataset=$(BENCHMARKS_DATASET) --table=$(BENCHMARKS_TABLE) --official=$(BENCHMARKS_OFFICIAL)); \
+  if test $$rc -eq 0 && test "$(BENCHMARKS_UPLOAD)" = "true"; then \
+    $(call run,tools/parsers:parser,parse --debug --file=$$T --runtime=$(RUNTIME) --suite_name=$(BENCHMARKS_SUITE) --project=$(BENCHMARKS_PROJECT) --dataset=$(BENCHMARKS_DATASET) --table=$(BENCHMARKS_TABLE) --official=$(BENCHMARKS_OFFICIAL)); \
   fi; \
   rm -rf $$T; \
-  exit $$rc
+  exit $$rc)
 
-benchmark-platforms: load-benchmarks ## Runs benchmarks for runc and all given platforms in BENCHMARK_PLATFORMS.
+benchmark-platforms: load-benchmarks $(RUNTIME_BIN) ## Runs benchmarks for runc and all given platforms in BENCHMARK_PLATFORMS.
 	@$(foreach PLATFORM,$(BENCHMARKS_PLATFORMS), \
-	  $(call run_benchmark,$(RUNTIME)+vfs2,$(BENCHMARK_ARGS) --platform=$(PLATFORM) --vfs2) && \
-	  $(call run_benchmark,$(RUNTIME),$(BENCHMARK_ARGS) --platform=$(PLATFORM)) && \
-	) \
-	$(call run-benchmark,runc)
+	  $(call run_benchmark,$(RUNTIME),--platform=$(PLATFORM) --vfs2)  && \
+	) true
+	@$(call run-benchmark,runc)
 .PHONY: benchmark-platforms
 
-run-benchmark: load-benchmarks ## Runs single benchmark and optionally sends data to BigQuery.
-	@$(call run_benchmark,$(RUNTIME),$(BENCHMARK_ARGS))
+run-benchmark: load-benchmarks $(RUNTIME_BIN) ## Runs single benchmark and optionally sends data to BigQuery.
+	@$(call run_benchmark,$(RUNTIME),)
 .PHONY: run-benchmark
 
 ##

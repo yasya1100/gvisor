@@ -51,10 +51,12 @@ var (
 	// /tmp/profile/RUNTIME/CONTAINER_NAME/*.pprof.
 	pprofBaseDir = flag.String("pprof-dir", "/tmp/profile", "base directory in: BASEDIR/RUNTIME/CONTINER_NAME/FILENAME (e.g. /tmp/profile/runtime/mycontainer/cpu.pprof)")
 
-	// duration is the max duration `runsc debug` will run and capture profiles.
-	// If the container's clean up method is called prior to duration, the
-	// profiling process will be killed.
-	duration = flag.Duration("pprof-duration", 10*time.Second, "duration to run the profile in seconds")
+	// pprofDelay is the start before profiling starts, or in the
+	// case of discrete profiles, the delay before it is collected.
+	pprofDelay = flag.Duration("pprof-delay", 3*time.Second, "delay prior to profile collection")
+
+	// pprofDuration is the duration of the collection.
+	pprofDuration = flag.Duration("pprof-duration", 4*time.Second, "duration of data collection (if relevant)")
 
 	// The below flags enable each type of profile. Multiple profiles can be
 	// enabled for each run.

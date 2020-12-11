@@ -1019,9 +1019,11 @@ func (s *Sandbox) StartCPUProfile(f *os.File) error {
 	}
 	defer conn.Close()
 
-	opts := control.ProfileOpts{
-		FilePayload: urpc.FilePayload{
-			Files: []*os.File{f},
+	opts := control.CPUProfileOpts{
+		ProfileOpts: control.ProfileOpts{
+			FilePayload: urpc.FilePayload{
+				Files: []*os.File{f},
+			},
 		},
 	}
 	if err := conn.Call(boot.StartCPUProfile, &opts, nil); err != nil {
@@ -1045,6 +1047,24 @@ func (s *Sandbox) StopCPUProfile() error {
 	return nil
 }
 
+// BlockProfileSetRate sets a the block profile rate.
+func (s *Sandbox) BlockProfileSetRate(rate int) error {
+	log.Debugf("Block profile set rate %d %q", rate, s.ID)
+	conn, err := s.sandboxConnect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	opts := control.BlockProfileOpts{
+		Rate: rate,
+	}
+	if err := conn.Call(boot.BlockProfile, &opts, nil); err != nil {
+		return fmt.Errorf("setting sandbox %q block profile rate: %v", s.ID, err)
+	}
+	return nil
+}
+
 // BlockProfile writes a block profile to the given file.
 func (s *Sandbox) BlockProfile(f *os.File) error {
 	log.Debugf("Block profile %q", s.ID)
@@ -1054,13 +1074,33 @@ func (s *Sandbox) BlockProfile(f *os.File) error {
 	}
 	defer conn.Close()
 
-	opts := control.ProfileOpts{
-		FilePayload: urpc.FilePayload{
-			Files: []*os.File{f},
+	opts := control.BlockProfileOpts{
+		ProfileOpts: control.ProfileOpts{
+			FilePayload: urpc.FilePayload{
+				Files: []*os.File{f},
+			},
 		},
 	}
 	if err := conn.Call(boot.BlockProfile, &opts, nil); err != nil {
 		return fmt.Errorf("getting sandbox %q block profile: %v", s.ID, err)
+	}
+	return nil
+}
+
+// MutexProfileSetFraction sets the mutex profiling fraction.
+func (s *Sandbox) MutexProfileSetFraction(fraction int) error {
+	log.Debugf("Mutex profile set fraction %d %q", fraction, s.ID)
+	conn, err := s.sandboxConnect()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	opts := control.MutexProfileOpts{
+		Fraction: fraction,
+	}
+	if err := conn.Call(boot.MutexProfile, &opts, nil); err != nil {
+		return fmt.Errorf("getting sandbox %q mutex profile: %v", s.ID, err)
 	}
 	return nil
 }
@@ -1074,9 +1114,11 @@ func (s *Sandbox) MutexProfile(f *os.File) error {
 	}
 	defer conn.Close()
 
-	opts := control.ProfileOpts{
-		FilePayload: urpc.FilePayload{
-			Files: []*os.File{f},
+	opts := control.MutexProfileOpts{
+		ProfileOpts: control.ProfileOpts{
+			FilePayload: urpc.FilePayload{
+				Files: []*os.File{f},
+			},
 		},
 	}
 	if err := conn.Call(boot.MutexProfile, &opts, nil); err != nil {

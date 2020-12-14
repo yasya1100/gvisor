@@ -23,8 +23,6 @@ import (
 	"gvisor.dev/gvisor/test/benchmarks/tools"
 )
 
-var testHarness harness.Harness
-
 type testCase struct {
 	name string
 	test tools.Sysbench
@@ -32,16 +30,14 @@ type testCase struct {
 
 // BenchmarSysbench runs sysbench on the runtime.
 func BenchmarkSysbench(b *testing.B) {
-
 	testCases := []testCase{
 		testCase{
 			name: "CPU",
 			test: &tools.SysbenchCPU{
 				Base: tools.SysbenchBase{
 					Threads: 1,
-					Time:    5,
 				},
-				MaxPrime: 50000,
+				MaxPrime: b.N, // Linear with execution.
 			},
 		},
 		testCase{
@@ -50,8 +46,8 @@ func BenchmarkSysbench(b *testing.B) {
 				Base: tools.SysbenchBase{
 					Threads: 1,
 				},
-				BlockSize: "1M",
-				TotalSize: "500G",
+				BlockSize: 1,
+				TotalSize: b.N, // Total megabytes to transfer.
 			},
 		},
 		testCase{
@@ -60,14 +56,12 @@ func BenchmarkSysbench(b *testing.B) {
 				Base: tools.SysbenchBase{
 					Threads: 8,
 				},
-				Loops: 1,
-				Locks: 10000000,
-				Num:   4,
+				Locks: b.N, // Number of times to lock/unlock.
 			},
 		},
 	}
 
-	machine, err := testHarness.GetMachine()
+	machine, err := harness.GetMachine()
 	if err != nil {
 		b.Fatalf("failed to get machine: %v", err)
 	}

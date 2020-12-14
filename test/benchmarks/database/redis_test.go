@@ -25,8 +25,6 @@ import (
 	"gvisor.dev/gvisor/test/benchmarks/tools"
 )
 
-var h harness.Harness
-
 // All possible operations from redis. Note: "ping" will
 // run both PING_INLINE and PING_BUILD.
 var operations []string = []string{
@@ -52,13 +50,13 @@ var operations []string = []string{
 // BenchmarkRedis runs redis-benchmark against a redis instance and reports
 // data in queries per second. Each is reported by named operation (e.g. LPUSH).
 func BenchmarkRedis(b *testing.B) {
-	clientMachine, err := h.GetMachine()
+	clientMachine, err := harness.GetMachine()
 	if err != nil {
 		b.Fatalf("failed to get machine: %v", err)
 	}
 	defer clientMachine.CleanUp()
 
-	serverMachine, err := h.GetMachine()
+	serverMachine, err := harness.GetMachine()
 	if err != nil {
 		b.Fatalf("failed to get machine: %v", err)
 	}
@@ -67,6 +65,34 @@ func BenchmarkRedis(b *testing.B) {
 	// Redis runs on port 6379 by default.
 	port := 6379
 	ctx := context.Background()
+	server := serverMachine.GetContainer(ctx, b)
+	defer server.CleanUp(ctx)
+
+	// The redis docker container takes no arguments to run a redis server.
+	if err := server.Spawn(ctx, dockerutil.RunOpts{
+		Image: "benchmarks/redis",
+		Ports: []int{port},
+	}); err != nil {
+		b.Fatalf("failed to start redis server with: %v", err)
+	}
+
+	if out, err := server.WaitForOutput(ctx, "Ready to accept connections", 3*time.Second); err != nil {
+		b.Fatalf("failed to start redis server: %v %s", err, out)
+	}
+
+	ip, err := serverMachine.IPAddress()
+	if err != nil {
+		b.Fatalf("failed to get IP from server: %v", err)
+	}
+
+	serverPort, err := server.FindPort(ctx, port)
+	if err != nil {
+		b.Fatalf("failed to get IP from server: %v", err)
+	}
+
+	if err = harness.WaitUntilServing(ctx, clientMachine, ip, serverPort); err != nil {
+		b.Fatalf("failed to start redis with: %v", err)
+	}
 
 	for _, operation := range operations {
 		param := tools.Parameter{
@@ -78,42 +104,13 @@ func BenchmarkRedis(b *testing.B) {
 			b.Fatalf("Failed to parse paramaters: %v", err)
 		}
 		b.Run(name, func(b *testing.B) {
-			server := serverMachine.GetContainer(ctx, b)
-			defer server.CleanUp(ctx)
-
-			// The redis docker container takes no arguments to run a redis server.
-			if err := server.Spawn(ctx, dockerutil.RunOpts{
-				Image: "benchmarks/redis",
-				Ports: []int{port},
-			}); err != nil {
-				b.Fatalf("failed to start redis server with: %v", err)
-			}
-
-			if out, err := server.WaitForOutput(ctx, "Ready to accept connections", 3*time.Second); err != nil {
-				b.Fatalf("failed to start redis server: %v %s", err, out)
-			}
-
-			ip, err := serverMachine.IPAddress()
-			if err != nil {
-				b.Fatalf("failed to get IP from server: %v", err)
-			}
-
-			serverPort, err := server.FindPort(ctx, port)
-			if err != nil {
-				b.Fatalf("failed to get IP from server: %v", err)
-			}
-
-			if err = harness.WaitUntilServing(ctx, clientMachine, ip, serverPort); err != nil {
-				b.Fatalf("failed to start redis with: %v", err)
-			}
-
 			redis := tools.Redis{
 				Operation: operation,
 			}
 
-			// Reset profiles and timer to begin the measurement.
-			server.RestartProfiles()
+			server.StartProfiling()
 			b.ResetTimer()
+
 			client := clientMachine.GetNativeContainer(ctx, b)
 			defer client.CleanUp(ctx)
 			out, err := client.Run(ctx, dockerutil.RunOpts{
@@ -125,12 +122,13 @@ func BenchmarkRedis(b *testing.B) {
 
 			// Stop time while we parse results.
 			b.StopTimer()
+			server.StopProfiling()
 			redis.Report(b, out)
 		})
 	}
 }
 
 func TestMain(m *testing.M) {
-	h.Init()
+	harness.Init()
 	os.Exit(m.Run())
 }

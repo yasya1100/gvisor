@@ -35,7 +35,6 @@ type Sysbench interface {
 // for sysbench. See: 'sysbench --help'
 type SysbenchBase struct {
 	Threads int // number of Threads for the test.
-	Time    int // time limit for test in seconds.
 }
 
 // baseFlags returns top level flags.
@@ -43,9 +42,6 @@ func (s *SysbenchBase) baseFlags() []string {
 	var ret []string
 	if s.Threads > 0 {
 		ret = append(ret, fmt.Sprintf("--threads=%d", s.Threads))
-	}
-	if s.Time > 0 {
-		ret = append(ret, fmt.Sprintf("--time=%d", s.Time))
 	}
 	return ret
 }
@@ -97,8 +93,8 @@ func (s *SysbenchCPU) parseEvents(data string) (float64, error) {
 // SysbenchMemory is for 'sysbench [FLAGS] memory run' and holds Memory specific arguments.
 type SysbenchMemory struct {
 	Base          SysbenchBase
-	BlockSize     string // size of test memory block [1K].
-	TotalSize     string // size of data to transfer [100G].
+	BlockSize     int    // size of test memory block in megabytes [1].
+	TotalSize     int    // size of data to transfer in gigabytes [100].
 	Scope         string // memory access scope {global, local} [global].
 	HugeTLB       bool   // allocate memory from HugeTLB [off].
 	OperationType string // type of memory ops {read, write, none} [write].
@@ -116,11 +112,11 @@ func (s *SysbenchMemory) MakeCmd() []string {
 // flags makes flags for SysbenchMemory cmds.
 func (s *SysbenchMemory) flags() []string {
 	cmd := s.Base.baseFlags()
-	if s.BlockSize != "" {
-		cmd = append(cmd, fmt.Sprintf("--memory-block-size=%s", s.BlockSize))
+	if s.BlockSize != 0 {
+		cmd = append(cmd, fmt.Sprintf("--memory-block-size=%dM", s.BlockSize))
 	}
-	if s.TotalSize != "" {
-		cmd = append(cmd, fmt.Sprintf("--memory-total-size=%s", s.TotalSize))
+	if s.TotalSize != 0 {
+		cmd = append(cmd, fmt.Sprintf("--memory-total-size=%dG", s.TotalSize))
 	}
 	if s.Scope != "" {
 		cmd = append(cmd, fmt.Sprintf("--memory-scope=%s", s.Scope))
@@ -147,7 +143,7 @@ func (s *SysbenchMemory) Report(b *testing.B, output string) {
 	ReportCustomMetric(b, result, "memory_operations" /*metric name*/, "ops_per_second" /*unit*/)
 }
 
-var memoryOperationsRE = regexp.MustCompile(`Total\soperations:\s+\d*\s*\((\d*\.\d*)\sper\ssecond\)`)
+var memoryOperationsRE = regexp.MustCompile(`Total\s+operations:\s+\d+\s+\((\s*\d+\.\d+\s*)\s+per\s+second\)`)
 
 // parseOperations parses memory operations per second form sysbench memory ouput.
 func (s *SysbenchMemory) parseOperations(data string) (float64, error) {
@@ -162,8 +158,8 @@ func (s *SysbenchMemory) parseOperations(data string) (float64, error) {
 type SysbenchMutex struct {
 	Base  SysbenchBase
 	Num   int // total size of mutex array [4096].
-	Locks int // number of mutex locks per thread [50K].
-	Loops int // number of loops to do outside mutex lock [10K].
+	Locks int // number of mutex locks per thread [50000].
+	Loops int // number of loops to do outside mutex lock [10000].
 }
 
 // MakeCmd makes commands for SysbenchMutex.

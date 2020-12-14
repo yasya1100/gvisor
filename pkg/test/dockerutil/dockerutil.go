@@ -25,7 +25,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
-	"time"
 
 	"gvisor.dev/gvisor/pkg/test/testutil"
 )
@@ -51,13 +50,8 @@ var (
 	// /tmp/profile/RUNTIME/CONTAINER_NAME/*.pprof.
 	pprofBaseDir = flag.String("pprof-dir", "/tmp/profile", "base directory in: BASEDIR/RUNTIME/CONTINER_NAME/FILENAME (e.g. /tmp/profile/runtime/mycontainer/cpu.pprof)")
 
-	// duration is the max duration `runsc debug` will run and capture profiles.
-	// If the container's clean up method is called prior to duration, the
-	// profiling process will be killed.
-	duration = flag.Duration("pprof-duration", 10*time.Second, "duration to run the profile in seconds")
-
 	// The below flags enable each type of profile. Multiple profiles can be
-	// enabled for each run.
+	// enabled for each run. The profile will be collected for the full run.
 	pprofBlock = flag.Bool("pprof-block", false, "enables block profiling with runsc debug")
 	pprofCPU   = flag.Bool("pprof-cpu", false, "enables CPU profiling with runsc debug")
 	pprofHeap  = flag.Bool("pprof-heap", false, "enables heap profiling with runsc debug")

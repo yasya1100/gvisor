@@ -678,6 +678,29 @@ TEST_P(RawPacketTest, GetSocketAcceptConn) {
 INSTANTIATE_TEST_SUITE_P(AllInetTests, RawPacketTest,
                          ::testing::Values(ETH_P_IP, ETH_P_ALL));
 
+class RawPacketMsgSizeTest : public ::testing::TestWithParam<TestAddress> {};
+
+TEST_P(RawPacketMsgSizeTest, SendTooLong) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_NET_RAW)));
+
+  TestAddress addr = GetParam().WithPort(kPort);
+
+  FileDescriptor udp_sock =
+      ASSERT_NO_ERRNO_AND_VALUE(Socket(addr.family(), SOCK_RAW, IPPROTO_UDP));
+
+  ASSERT_THAT(
+      connect(udp_sock.get(), reinterpret_cast<struct sockaddr*>(&addr.addr),
+              addr.addr_len),
+      SyscallSucceeds());
+
+  char buf[65536] = {};
+  ASSERT_THAT(send(udp_sock.get(), buf, sizeof(buf), 0),
+              SyscallFailsWithErrno(EMSGSIZE));
+}
+
+INSTANTIATE_TEST_SUITE_P(AllRawPacketMsgSizeTest, RawPacketMsgSizeTest,
+                         ::testing::Values(V4Loopback(), V6Loopback()));
+
 }  // namespace
 
 }  // namespace testing

@@ -732,10 +732,12 @@ func (ndp *ndpState) sendDADPacket(addr tcpip.Address, addressEndpoint stack.Add
 	})
 
 	sent := ndp.ep.protocol.stack.Stats().ICMP.V6.PacketsSent
-	ndp.ep.addIPHeader(header.IPv6Any, snmc, pkt, stack.NetworkHeaderParams{
+	if err := ndp.ep.addIPHeader(header.IPv6Any, snmc, pkt, stack.NetworkHeaderParams{
 		Protocol: header.ICMPv6ProtocolNumber,
 		TTL:      header.NDPHopLimit,
-	}, nil /* extensionHeaders */)
+	}, nil /* extensionHeaders */); err != nil {
+		return err
+	}
 
 	if err := ndp.ep.nic.WritePacketToRemote(header.EthernetAddressFromMulticastIPv6Address(snmc), nil /* gso */, ProtocolNumber, pkt); err != nil {
 		sent.Dropped.Increment()
@@ -1854,12 +1856,16 @@ func (ndp *ndpState) startSolicitingRouters() {
 		})
 
 		sent := ndp.ep.protocol.stack.Stats().ICMP.V6.PacketsSent
-		ndp.ep.addIPHeader(localAddr, header.IPv6AllRoutersMulticastAddress, pkt, stack.NetworkHeaderParams{
+
+		err := ndp.ep.addIPHeader(localAddr, header.IPv6AllRoutersMulticastAddress, pkt, stack.NetworkHeaderParams{
 			Protocol: header.ICMPv6ProtocolNumber,
 			TTL:      header.NDPHopLimit,
 		}, nil /* extensionHeaders */)
+		if err == nil {
+			err = ndp.ep.nic.WritePacketToRemote(header.EthernetAddressFromMulticastIPv6Address(header.IPv6AllRoutersMulticastAddress), nil /* gso */, ProtocolNumber, pkt)
+		}
 
-		if err := ndp.ep.nic.WritePacketToRemote(header.EthernetAddressFromMulticastIPv6Address(header.IPv6AllRoutersMulticastAddress), nil /* gso */, ProtocolNumber, pkt); err != nil {
+		if err != nil {
 			sent.Dropped.Increment()
 			log.Printf("startSolicitingRouters: error writing NDP router solicit message on NIC(%d); err = %s", ndp.ep.nic.ID(), err)
 			// Don't send any more messages if we had an error.

@@ -1314,8 +1314,10 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 	// Do not leave fast recovery, if the ACK is out of range.
 	if s.fr.active {
 		// Leave fast recovery if it acknowledges all the data covered by
-		// this fast recovery session.
-		if ack.InRange(s.sndUna, s.sndNxt+1) && s.fr.last.LessThan(ack) {
+		// this fast recovery session and at least one more byte of data
+		// beyond the highest byte that was outstanding when fast retransmit
+		// was last entered. (According to RFC 6582 section-3.2)
+		if (ack-1).InRange(s.sndUna, s.sndNxt) && s.fr.last.LessThan(ack-1) {
 			s.leaveRecovery()
 		}
 	} else {

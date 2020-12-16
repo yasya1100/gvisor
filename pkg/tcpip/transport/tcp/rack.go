@@ -17,8 +17,14 @@ package tcp
 import (
 	"time"
 
+	"gvisor.dev/gvisor/pkg/sleep"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/seqnum"
 )
+
+// WCDelAckT is the recommended maximum delayed ACK timer value as defined in
+// https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.5.
+const WCDelAckT = 200 * time.Millisecond
 
 // RACK is a loss detection algorithm used in TCP to detect packet loss and
 // reordering using transmission timestamp of the packets instead of packet or
@@ -54,6 +60,23 @@ type rackControl struct {
 
 	// xmitTime is the latest transmission timestamp of rackControl.seg.
 	xmitTime time.Time `state:".(unixTime)"`
+
+	// probeTimer and probeWaker are used to schedule PTO for RACK TLP algorithm.
+	probeTimer timer       `state:"nosave"`
+	probeWaker sleep.Waker `state:"nosave"`
+
+	// unaTLPRxt (TLPRxtOut) indicates whether there is an unacknowledged
+	// TLP retransmission.
+	unaTLPRxt bool
+
+	// highTLPRxt (TLPHighRxt) the value of sender.sndNxt at the time of sending
+	// a TLP retransmission.
+	highTLPRxt seqnum.Value
+}
+
+// init initializes RACK specific fields.
+func (rc *rackControl) init() {
+	rc.probeTimer.init(&rc.probeWaker)
 }
 
 // update will update the RACK related fields when an ACK has been received.
@@ -126,4 +149,81 @@ func (rc *rackControl) detectReorder(seg *segment) {
 // setDSACKSeen updates rack control if duplicate SACK is seen by the connection.
 func (rc *rackControl) setDSACKSeen() {
 	rc.dsackSeen = true
+}
+
+// shouldSchedulePTO dictates whether we should schedule a PTO or not.
+// See https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.5.1.
+func (s *sender) shouldSchedulePTO() bool {
+	return s.ep.sackPermitted && // The connection supports SACK.
+		(s.state != RTORecovery && s.state != SACKRecovery) && // The connection is not in loss recovery.
+		s.ep.scoreboard.Sacked() == 0 // The connection has no SACKed sequences in the SACK scoreboard.
+}
+
+// schedulePTO schedules the probe timeout as defined in
+// https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.5.1.
+func (s *sender) schedulePTO() {
+	pto := time.Second
+	s.rtt.Lock()
+	if s.rtt.srttInited {
+		pto = s.rtt.srtt * 2
+		if s.outstanding == 1 {
+			pto += WCDelAckT
+		}
+	}
+	s.rtt.Unlock()
+
+	now := time.Now()
+	if s.resendTimer.enabled() {
+		if now.Add(pto).After(s.resendTimer.target) {
+			pto = s.resendTimer.target.Sub(now)
+		}
+		s.resendTimer.disable()
+	}
+
+	s.rc.probeTimer.enable(pto)
+}
+
+// probeTimerExpired is the same as TLP_send_probe() as defined in
+// https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.5.2.
+func (s *sender) probeTimerExpired() *tcpip.Error {
+	if !s.rc.probeTimer.checkExpiration() {
+		return nil
+	}
+
+	var dataSent bool
+	if s.writeNext != nil && s.outstanding < s.sndCwnd {
+		dataSent = s.maybeSendSegment(s.writeNext, int(s.ep.scoreboard.SMSS()), s.sndUna.Add(s.sndWnd))
+		if dataSent {
+			s.outstanding += s.pCount(s.writeNext, s.maxPayloadSize)
+			s.writeNext = s.writeNext.Next()
+		}
+	}
+
+	if !dataSent && !s.rc.unaTLPRxt {
+		var highestSeqXmit *segment
+		for highestSeqXmit = s.writeList.Front(); highestSeqXmit != nil; highestSeqXmit = highestSeqXmit.Next() {
+			if highestSeqXmit.xmitCount == 0 {
+				// Nothing in writeList is transmitted, no need to send a probe.
+				highestSeqXmit = nil
+				break
+			}
+			if highestSeqXmit.Next() == nil || highestSeqXmit.Next().xmitCount == 0 {
+				// Either everything in writeList has been transmitted or the next
+				// sequence has not been transmitted. Either way this is the highest
+				// sequence segment that was transmitted.
+				break
+			}
+		}
+
+		if highestSeqXmit != nil {
+			dataSent = s.maybeSendSegment(highestSeqXmit, int(s.ep.scoreboard.SMSS()), s.sndUna.Add(s.sndWnd))
+			if dataSent {
+				s.rc.unaTLPRxt = true
+				s.rc.highTLPRxt = s.sndNxt
+			}
+		}
+	}
+
+	s.postXmit(dataSent, true)
+	return nil
 }

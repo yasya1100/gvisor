@@ -286,6 +286,8 @@ func newSender(ep *endpoint, iss, irs seqnum.Value, sndWnd seqnum.Size, mss uint
 		gso: ep.gso != nil,
 	}
 
+	s.rc.init()
+
 	if s.gso {
 		s.ep.gso.MSS = uint16(maxPayloadSize)
 	}
@@ -530,6 +532,12 @@ func (s *sender) retransmitTimerExpired() bool {
 
 	s.ep.stack.Stats().TCP.Timeouts.Increment()
 	s.ep.stats.SendErrors.Timeouts.Increment()
+
+	if s.ep.sackPermitted {
+		// Set TLPRxtOut to false according to
+		// https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.6.1.
+		s.rc.unaTLPRxt = false
+	}
 
 	// Give up if we've waited more than a minute since the last resend or
 	// if a user time out is set and we have exceeded the user specified
@@ -975,7 +983,7 @@ func (s *sender) disableZeroWindowProbing() {
 	s.resendTimer.disable()
 }
 
-func (s *sender) postXmit(dataSent bool) {
+func (s *sender) postXmit(dataSent bool, probeSent bool) {
 	if dataSent {
 		// We sent data, so we should stop the keepalive timer to ensure
 		// that no keepalives are sent while there is pending data.
@@ -989,8 +997,11 @@ func (s *sender) postXmit(dataSent bool) {
 		s.enableZeroWindowProbing()
 	}
 
-	// Enable the timer if we have pending data and it's not enabled yet.
-	if !s.resendTimer.enabled() && s.sndUna != s.sndNxt {
+	if !probeSent && s.shouldSchedulePTO() {
+		// Schedule PTO after transmitting new data that wasn't itself a TLP probe.
+		s.schedulePTO()
+	} else if !s.resendTimer.enabled() && s.sndUna != s.sndNxt {
+		// Enable the timer if we have pending data and it's not enabled yet.
 		s.resendTimer.enable(s.rto)
 	}
 	// If we have no more pending data, start the keepalive timer.
@@ -1038,7 +1049,7 @@ func (s *sender) sendData() {
 		s.writeNext = seg.Next()
 	}
 
-	s.postXmit(dataSent)
+	s.postXmit(dataSent, false)
 }
 
 func (s *sender) enterRecovery() {
@@ -1058,6 +1069,9 @@ func (s *sender) enterRecovery() {
 	if s.ep.sackPermitted {
 		s.state = SACKRecovery
 		s.ep.stack.Stats().TCP.SACKRecovery.Increment()
+		// Set TLPRxtOut to false according to
+		// https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.6.1.
+		s.rc.unaTLPRxt = false
 		return
 	}
 	s.state = FastRecovery
@@ -1141,19 +1155,11 @@ func (s *sender) SetPipe() {
 // detected. It manages the state related to duplicate acks and determines if
 // a retransmit is needed according to the rules in RFC 6582 (NewReno).
 func (s *sender) detectLoss(seg *segment) (fastRetransmit bool) {
-	ack := seg.ackNumber
+	// We're not in fast recovery yet.
 
-	// We're not in fast recovery yet. A segment is considered a duplicate
-	// only if it doesn't carry any data and doesn't update the send window,
-	// because if it does, it wasn't sent in response to an out-of-order
-	// segment. If SACK is enabled then we have an additional check to see
-	// if the segment carries new SACK information. If it does then it is
-	// considered a duplicate ACK as per RFC6675.
-	if ack != s.sndUna || seg.logicalLen() != 0 || s.sndWnd != seg.window || ack == s.sndNxt {
-		if !s.ep.sackPermitted || !seg.hasNewSACKInfo {
-			s.dupAckCount = 0
-			return false
-		}
+	if !s.isDupAck(seg) {
+		s.dupAckCount = 0
+		return false
 	}
 
 	s.dupAckCount++
@@ -1184,6 +1190,31 @@ func (s *sender) detectLoss(seg *segment) (fastRetransmit bool) {
 	return true
 }
 
+// isDupAck determines if seg is a duplicate ack as defined in
+// https://tools.ietf.org/html/rfc5681#section-2.
+func (s *sender) isDupAck(seg *segment) bool {
+	// A TCP that utilizes selective acknowledgments (SACKs) [RFC2018, RFC2883]
+	// can leverage the SACK information to determine when an incoming ACK is a
+	// "duplicate" (e.g., if the ACK contains previously unknown SACK
+	// information).
+	if s.ep.sackPermitted && !seg.hasNewSACKInfo {
+		return false
+	}
+
+	// (a) The receiver of the ACK has outstanding data.
+	return s.sndUna != s.sndNxt &&
+		// (b) The incoming acknowledgment carries no data.
+		seg.logicalLen() == 0 &&
+		// (c) The SYN and FIN bits are both off.
+		!seg.flagIsSet(header.TCPFlagFin) && !seg.flagIsSet(header.TCPFlagSyn) &&
+		// (d) the ACK number is equal to the greatest acknowledgment received on
+		// the given connection (TCP.UNA from RFC793).
+		seg.ackNumber == s.sndUna &&
+		// (e) the advertised window in the incoming acknowledgment equals the
+		// advertised window in the last incoming acknowledgment.
+		s.sndWnd == seg.window
+}
+
 // Iterate the writeList and update RACK for each segment which is newly acked
 // either cumulatively or selectively. Loop through the segments which are
 // sacked, and update the RACK related variables and check for reordering.
@@ -1194,7 +1225,7 @@ func (s *sender) walkSACK(rcvdSeg *segment) {
 	// Look for DSACK block.
 	idx := 0
 	n := len(rcvdSeg.parsedOptions.SACKBlocks)
-	if s.checkDSACK(rcvdSeg) {
+	if checkDSACK(rcvdSeg) {
 		s.rc.setDSACKSeen()
 		idx = 1
 		n--
@@ -1226,8 +1257,8 @@ func (s *sender) walkSACK(rcvdSeg *segment) {
 	}
 }
 
-// checkDSACK checks if a DSACK is reported and updates it in RACK.
-func (s *sender) checkDSACK(rcvdSeg *segment) bool {
+// checkDSACK checks if a DSACK is reported.
+func checkDSACK(rcvdSeg *segment) bool {
 	n := len(rcvdSeg.parsedOptions.SACKBlocks)
 	if n == 0 {
 		return false
@@ -1336,6 +1367,30 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 		fastRetransmit = s.detectLoss(rcvdSeg)
 	}
 
+	// Consider TLP episode to be done if the following conditions meet.
+	// See https://tools.ietf.org/html/draft-ietf-tcpm-rack-08#section-7.6.3.
+	if s.ep.sackPermitted && s.rc.unaTLPRxt {
+		// Step 1.
+		if s.isDupAck(rcvdSeg) && ack == s.rc.highTLPRxt && ack == s.sndUna {
+			var sbAboveTLPHighRxt bool
+			for _, sb := range rcvdSeg.parsedOptions.SACKBlocks {
+				sbAboveTLPHighRxt = sbAboveTLPHighRxt || s.rc.highTLPRxt.LessThan(sb.End)
+			}
+			if sbAboveTLPHighRxt {
+				s.rc.unaTLPRxt = false
+			}
+		} else if s.rc.highTLPRxt.LessThanEq(ack) {
+			s.rc.unaTLPRxt = false
+			if !checkDSACK(rcvdSeg) {
+				// Step 2. Either the original packet or the retransmission (in the
+				// form of a probe) was lost. Invoke a congestion control response
+				// equivalent to fast recovery.
+				s.enterRecovery()
+				s.leaveRecovery()
+			}
+		}
+	}
+
 	// Stash away the current window size.
 	s.sndWnd = rcvdSeg.window
 
@@ -1375,9 +1430,14 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 			s.updateRTO(elapsed)
 		}
 
-		// When an ack is received we must rearm the timer.
-		// RFC 6298 5.3
-		s.resendTimer.enable(s.rto)
+		if s.shouldSchedulePTO() && len(rcvdSeg.parsedOptions.SACKBlocks) == 0 {
+			// Schedule PTO upon receiving an ACK that cumulatively acknowledges data.
+			s.schedulePTO()
+		} else {
+			// When an ack is received we must rearm the timer.
+			// RFC 6298 5.3
+			s.resendTimer.enable(s.rto)
+		}
 
 		// Remove all acknowledged data from the write list.
 		acked := s.sndUna.Size(ack)
@@ -1455,6 +1515,7 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 			// Reset firstRetransmittedSegXmitTime to the zero value.
 			s.firstRetransmittedSegXmitTime = time.Time{}
 			s.resendTimer.disable()
+			s.rc.probeTimer.disable()
 		}
 	}
 

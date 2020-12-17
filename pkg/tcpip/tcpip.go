@@ -1529,6 +1529,65 @@ type IPStats struct {
 	OptionUnknownReceived *StatCounter
 }
 
+// ARPStats collects ARP-specific stats.
+type ARPStats struct {
+	// PacketsReceived is the total number of ARP packets received from the link
+	// layer.
+	PacketsReceived *StatCounter
+
+	// DisabledPacketsReceived is the total number of ARP packets received from
+	// the link layer when the ARP layer is disabled.
+	DisabledPacketsReceived *StatCounter
+
+	// MalformedPacketsReceived is the total number of ARP packets that were
+	// dropped due to the ARP packet header failing validation checks.
+	MalformedPacketsReceived *StatCounter
+
+	// RequestsReceived is the total number of ARP requests received.
+	RequestsReceived *StatCounter
+
+	// RequestsReceivedUnknownTargetAddress is the total number of received ARP
+	// requests that has a target address which is not assigned to any of the
+	// NICs.
+	RequestsReceivedUnknownTargetAddress *StatCounter
+
+	// RequestsReceivedKnownTargetAddress is the total number of received ARP
+	// requests that has a target address assigned to one of the NICs.
+	RequestsReceivedKnownTargetAddress *StatCounter
+
+	// OutgoingRequestInterfaceHasNoLocalAddressErrors is the total number of
+	// failures to send an ARP request because the interface has no network
+	// address assigned to it.
+	OutgoingRequestInterfaceHasNoLocalAddressErrors *StatCounter
+
+	// OutgoingRequestBadLocalAddressErrors is the total number of failures to
+	// send an ARP request with a bad local address.
+	OutgoingRequestBadLocalAddressErrors *StatCounter
+
+	// OutgoingRequestNetworkUnreachableErrors is the total number of failures to
+	// send an ARP request with a network unreachable error.
+	OutgoingRequestNetworkUnreachableErrors *StatCounter
+
+	// OutgoingRequestWriteErrors is the total number of ARP requests which failed
+	// to write to a link-layer endpoint.
+	OutgoingRequestWriteErrors *StatCounter
+
+	// OutgoingRequestSent is the total number of ARP requests successfully
+	// written to a link-layer endpoint.
+	OutgoingRequestsSent *StatCounter
+
+	// RepliesReceived is the total number of ARP replies received.
+	RepliesReceived *StatCounter
+
+	// OutgoingReplyWriteErrors is the total number of ARP replies which failed to
+	// write to a link-layer endpoint.
+	OutgoingReplyWriteErrors *StatCounter
+
+	// OutgoingRepliesSent is the total number of ARP replies successfully
+	// written to a link-layer endpoint.
+	OutgoingRepliesSent *StatCounter
+}
+
 // TCPStats collects TCP-specific stats.
 type TCPStats struct {
 	// ActiveConnectionOpenings is the number of connections opened
@@ -1680,6 +1739,9 @@ type Stats struct {
 
 	// IP breaks out IP-specific stats (both v4 and v6).
 	IP IPStats
+
+	// ARP breaks out ARP-specific stats.
+	ARP ARPStats
 
 	// TCP breaks out TCP-specific stats.
 	TCP TCPStats

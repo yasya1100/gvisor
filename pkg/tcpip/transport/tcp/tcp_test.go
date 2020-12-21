@@ -27,8 +27,10 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip/checker"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
+	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/link/loopback"
 	"gvisor.dev/gvisor/pkg/tcpip/link/sniffer"
+	"gvisor.dev/gvisor/pkg/tcpip/network/arp"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
 	"gvisor.dev/gvisor/pkg/tcpip/ports"
@@ -4778,6 +4780,79 @@ func TestConnectAvoidsBoundPorts(t *testing.T) {
 						})
 					}
 				})
+			}
+		})
+	}
+}
+
+// TestConnectLinkAddrFailureNotify tests for endpoint connect to notify
+// HUp event on link address resolution failure.
+func TestConnectLinkAddrFailureNotify(t *testing.T) {
+	for _, tt := range []struct {
+		test        string
+		netProto    tcpip.NetworkProtocolNumber
+		addr        tcpip.Address
+		connectAddr tcpip.Address
+		routeSubnet tcpip.Subnet
+	}{
+		{"v4", ipv4.ProtocolNumber, context.StackAddr, context.TestAddr, header.IPv4EmptySubnet},
+		{"v6", ipv6.ProtocolNumber, context.StackV6Addr, context.TestV6Addr, header.IPv6EmptySubnet},
+	} {
+		t.Run(tt.test, func(t *testing.T) {
+			s := stack.New(stack.Options{
+				NetworkProtocols: []stack.NetworkProtocolFactory{
+					arp.NewProtocol,
+					ipv4.NewProtocol,
+					ipv6.NewProtocol,
+				},
+				TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol},
+			})
+
+			nicID := tcpip.NICID(1)
+			e := channel.New(0, defaultMTU, "")
+			e.LinkEPCapabilities |= stack.CapabilityResolutionRequired
+			nicOpts := stack.NICOptions{Disabled: true}
+			if err := s.CreateNICWithOptions(nicID, e, nicOpts); err != nil {
+				t.Fatalf("got CreateNICWithOptions(%d, %+v, %+v) = %s", nicID, e, nicOpts, err)
+			}
+
+			if err := s.EnableNIC(nicID); err != nil {
+				t.Fatalf("got EnableNIC(%d) = %s", nicID, err)
+			}
+			if err := s.AddAddress(nicID, tt.netProto, tt.addr); err != nil {
+				t.Fatalf("got stack.AddAddress(%d, %d, %s) = %s", nicID, tt.netProto, tt.addr, err)
+			}
+
+			s.AddRoute(tcpip.Route{
+				Destination: tt.routeSubnet,
+				NIC:         nicID,
+			})
+
+			var wq waiter.Queue
+			ep, err := s.NewEndpoint(tcp.ProtocolNumber, tt.netProto, &wq)
+			if err != nil {
+				t.Fatalf("got NewEndpoint(%d, %d, _) = %s", tcp.ProtocolNumber, tt.netProto, err)
+			}
+			defer ep.Close()
+
+			if err := ep.Bind(tcpip.FullAddress{Port: context.StackPort}); err != nil {
+				t.Fatalf("got Bind(%v) = %s", tcpip.FullAddress{Port: context.StackPort}, err)
+			}
+
+			waitEntry, notifyCh := waiter.NewChannelEntry(nil)
+			wq.EventRegister(&waitEntry, waiter.EventHUp)
+			defer wq.EventUnregister(&waitEntry)
+
+			// Connect to a routable peer, but without link-address resolution.
+			if err := ep.Connect(tcpip.FullAddress{NIC: nicID, Addr: tt.connectAddr}); err != tcpip.ErrConnectStarted {
+				t.Fatalf("got ep.Connect(...) = %s, want = %s", err, tcpip.ErrConnectStarted)
+			}
+
+			select {
+			case <-notifyCh:
+				return
+			case <-time.After(5 * time.Second):
+				t.Fatalf("Did not receive HUp event")
 			}
 		})
 	}

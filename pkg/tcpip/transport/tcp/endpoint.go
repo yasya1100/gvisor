@@ -2359,6 +2359,7 @@ func (e *endpoint) startMainLoop(handshake bool) *tcpip.Error {
 			if err := preloop(); err != nil {
 				e.workerRunning = false
 				e.mu.Unlock()
+				e.waiterQueue.Notify(waiter.EventHUp | waiter.EventErr | waiter.EventIn | waiter.EventOut)
 				return
 			}
 			e.mu.Unlock()
